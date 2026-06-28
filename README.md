@@ -153,9 +153,12 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
+
 ## Screenshots
 
-> Add screenshots here after taking them
+![LeadHunter Dashboard](screenshots/dashboard.png)
+![Lead Finder](screenshots/finder.png)
+![Leads Table](screenshots/leads.png)
 
 ---
 
