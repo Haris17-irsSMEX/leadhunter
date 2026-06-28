@@ -176,6 +176,6 @@ MIT — use it however you want.
 ---
 
 <div align="center">
-Built by <a href="https://github.com/YOUR_USERNAME">Haris</a> · 
-<a href="https://irssme x.com">irsSMEX</a>
+Built by <a href="https://github.com/ Haris17-irsSMEX">Haris</a> · 
+<a href="https://irssmex.com">irsSMEX</a>
 </div>
