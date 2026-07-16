@@ -18,6 +18,22 @@ type LeadsResponse = {
 type SourceFilter = "all" | Lead["source"];
 type SortOption = "newest" | "oldest" | "company";
 
+function toSourceFilter(value: string | null): SourceFilter {
+  if (
+    value === "website" ||
+    value === "google_maps" ||
+    value === "directory" ||
+    value === "hackernews" ||
+    value === "reddit" ||
+    value === "indiehackers" ||
+    value === "producthunt"
+  ) {
+    return value;
+  }
+
+  return "all";
+}
+
 async function parseResponseSafely(response: Response) {
   const contentType = response.headers.get("content-type") ?? "";
 
@@ -68,6 +84,18 @@ function sourceLabel(source: Lead["source"]) {
   if (source === "directory") {
     return "Directory";
   }
+  if (source === "hackernews") {
+    return "Hacker News";
+  }
+  if (source === "reddit") {
+    return "Reddit";
+  }
+  if (source === "indiehackers") {
+    return "Indie Hackers";
+  }
+  if (source === "producthunt") {
+    return "Product Hunt";
+  }
   return "Website";
 }
 
@@ -77,6 +105,18 @@ function sourceBadgeClass(source: Lead["source"]) {
   }
   if (source === "directory") {
     return "border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.15)] text-[var(--accent)]";
+  }
+  if (source === "hackernews") {
+    return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+  }
+  if (source === "reddit") {
+    return "border-orange-400/30 bg-orange-400/10 text-orange-200";
+  }
+  if (source === "indiehackers") {
+    return "border-indigo-400/30 bg-indigo-400/10 text-indigo-200";
+  }
+  if (source === "producthunt") {
+    return "border-rose-400/30 bg-rose-400/10 text-rose-200";
   }
   return "border-[rgba(91,127,255,0.28)] bg-[rgba(91,127,255,0.15)] text-blue-300";
 }
@@ -171,6 +211,9 @@ function LeadRow({
   const rowId = lead.id ?? `${lead.company_name}-${lead.source_url}`;
   const industry = industryPreview(lead.industry);
   const canFindEmail = needsEmailEnrichment(lead);
+  const isCommunityLead =
+    lead.source === "hackernews" || lead.source === "reddit" || lead.source === "indiehackers" || lead.source === "producthunt";
+  const emailButtonLabel = isCommunityLead ? "Try email" : "Find email";
 
   return (
     <>
@@ -196,11 +239,12 @@ function LeadRow({
                   onEnrichEmail();
                 }}
                 className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-2 py-1 text-[11px] font-medium text-[var(--accent)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`Find email for ${lead.company_name}`}
+                aria-label={`${emailButtonLabel} for ${lead.company_name}`}
+                title={isCommunityLead ? "Community leads often need a website check before email enrichment." : undefined}
               >
                 {isEnriching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />}
                 <Sparkles className="h-3 w-3" />
-                Find email
+                {emailButtonLabel}
               </button>
             ) : null}
           </div>
@@ -240,7 +284,8 @@ function LeadRow({
                 disabled={isEnriching}
                 onClick={onEnrichEmail}
                 className="icon-button h-7 w-7 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`Find email for ${lead.company_name}`}
+                aria-label={`${emailButtonLabel} for ${lead.company_name}`}
+                title={isCommunityLead ? "Community leads often need a website check before email enrichment." : undefined}
               >
                 {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               </button>
@@ -282,11 +327,12 @@ function LeadRow({
 export default function LeadsTable() {
   const searchParams = useSearchParams();
   const { showToast } = useToast();
+  const sourceParamFilter = toSourceFilter(searchParams.get("source"));
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>(sourceParamFilter);
   const [sort, setSort] = useState<SortOption>("newest");
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -325,6 +371,10 @@ export default function LeadsTable() {
         query.set("job_id", jobIdFilter);
       }
 
+      if (sourceFilter !== "all") {
+        query.set("source", sourceFilter);
+      }
+
       const response = await fetch(`/api/leads?${query.toString()}`, { cache: "no-store" });
       const payload = (await parseResponseSafely(response)) as LeadsResponse & { error?: string };
 
@@ -349,7 +399,11 @@ export default function LeadsTable() {
 
   useEffect(() => {
     void fetchLeads(1);
-  }, [jobIdFilter]);
+  }, [jobIdFilter, sourceFilter]);
+
+  useEffect(() => {
+    setSourceFilter(sourceParamFilter);
+  }, [sourceParamFilter]);
 
   useEffect(() => {
     if (!copyMessage) {
@@ -601,11 +655,19 @@ export default function LeadsTable() {
     }
   }
 
-  const sourcePills: Array<{ label: string; value: SourceFilter }> = [
-    { label: "All", value: "all" },
-    { label: "Websites", value: "website" },
-    { label: "Google Maps", value: "google_maps" },
-    { label: "Directories", value: "directory" },
+  const sourcePillRows: Array<Array<{ label: string; value: SourceFilter }>> = [
+    [
+      { label: "All", value: "all" },
+      { label: "Websites", value: "website" },
+      { label: "Google Maps", value: "google_maps" },
+      { label: "Directories", value: "directory" },
+    ],
+    [
+      { label: "Hacker News", value: "hackernews" },
+      { label: "Reddit", value: "reddit" },
+      { label: "Indie Hackers", value: "indiehackers" },
+      { label: "Product Hunt", value: "producthunt" },
+    ],
   ];
 
   return (
@@ -651,16 +713,20 @@ export default function LeadsTable() {
           </label>
 
           <div className="flex flex-1 flex-col gap-4 xl:flex-row xl:items-center xl:justify-end">
-            <div className="flex flex-wrap gap-2">
-              {sourcePills.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setSourceFilter(pill.value)}
-                  className={sourceFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                >
-                  {pill.label}
-                </button>
+            <div className="flex flex-col gap-2">
+              {sourcePillRows.map((row, rowIndex) => (
+                <div key={`source-row-${rowIndex}`} className="flex flex-wrap gap-2">
+                  {row.map((pill) => (
+                    <button
+                      key={pill.value}
+                      type="button"
+                      onClick={() => setSourceFilter(pill.value)}
+                      className={sourceFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                    >
+                      {pill.label}
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
 

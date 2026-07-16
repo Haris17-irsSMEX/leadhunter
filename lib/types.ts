@@ -14,10 +14,18 @@ export interface Lead {
   employee_count?: string;
   pricing_model?: string;
   tech_stack?: string[];
-  source: "website" | "google_maps" | "directory";
+  source: "website" | "google_maps" | "directory" | "hackernews" | "reddit" | "indiehackers" | "producthunt";
   source_url: string;
+  source_external_id?: string;
   job_id?: string;
   user_id?: string;
+  posted_at?: string;
+  author_handle?: string;
+  community_name?: string;
+  signal_type?: string;
+  intent_score?: number;
+  intent_reason?: string;
+  raw_metadata?: Record<string, unknown>;
   scraped_at?: string;
 }
 

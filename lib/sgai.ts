@@ -132,13 +132,17 @@ async function postSgai<T>(path: string, body: JsonRecord): Promise<T> {
   return (await response.json()) as T;
 }
 
+export async function extractWithSgai(url: string, prompt: string): Promise<unknown> {
+  return postSgai<unknown>("/extract", {
+    url,
+    prompt,
+    mode: "normal",
+  });
+}
+
 export async function scrapeWebsite(url: string, prompt = WEBSITE_PROMPT): Promise<Lead> {
   try {
-    const response = await postSgai<unknown>("/extract", {
-      url,
-      prompt,
-      mode: "normal",
-    });
+    const response = await extractWithSgai(url, prompt);
 
     return normalizeLead(getResult(response), "website", url);
   } catch (error) {
@@ -235,11 +239,7 @@ export async function scrapeGoogleMaps(query: string, location: string, numResul
 }
 
 export async function scrapeDirectory(url: string): Promise<Lead[]> {
-  const response = await postSgai<unknown>("/extract", {
-    url,
-    prompt: DIRECTORY_PROMPT,
-    mode: "normal",
-  });
+  const response = await extractWithSgai(url, DIRECTORY_PROMPT);
 
   return getLeadItems(response).map((item) => normalizeLead(item, "directory", url));
 }
