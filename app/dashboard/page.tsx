@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import DashboardClient from "@/components/DashboardClient";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import type { Lead, ScrapeJob } from "@/lib/types";
+import { getUsageSummary } from "@/lib/usage";
+
+export const dynamic = "force-dynamic";
 
 type DashboardJob = ScrapeJob & {
   input_summary?: string;
@@ -19,11 +23,19 @@ function summarizeSourceUrl(value?: string) {
 }
 
 async function loadDashboardData() {
+  const user = await requireUser();
+  const allowedUserIds = getAllowedUserIds(user);
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
-  const [{ data: leadRows, error: leadsError, count }, { data: jobRows, error: jobsError }] = await Promise.all([
-    supabase.from("leads").select("*", { count: "exact" }).order("scraped_at", { ascending: false }).range(0, 4),
-    supabase.from("jobs").select("*").order("created_at", { ascending: false }).limit(10),
+  const [{ data: leadRows, error: leadsError, count }, { data: jobRows, error: jobsError }, usage] = await Promise.all([
+    supabase
+      .from("leads")
+      .select("*", { count: "exact" })
+      .in("user_id", allowedUserIds)
+      .order("scraped_at", { ascending: false })
+      .range(0, 4),
+    supabase.from("jobs").select("*").in("user_id", allowedUserIds).order("created_at", { ascending: false }).limit(10),
+    getUsageSummary(user),
   ]);
 
   if (leadsError) {
@@ -44,6 +56,7 @@ async function loadDashboardData() {
       .from("leads")
       .select("job_id, source_url")
       .in("job_id", jobIds)
+      .in("user_id", allowedUserIds)
       .order("scraped_at", { ascending: false });
 
     if (summaryError) {
@@ -69,11 +82,12 @@ async function loadDashboardData() {
     leads,
     totalLeads: count ?? 0,
     jobs: dashboardJobs,
+    usage,
   };
 }
 
 export default async function DashboardPage() {
-  const { leads, totalLeads, jobs } = await loadDashboardData();
+  const { leads, totalLeads, jobs, usage } = await loadDashboardData();
 
-  return <DashboardClient initialLeads={leads} initialTotalLeads={totalLeads} initialJobs={jobs} />;
+  return <DashboardClient initialLeads={leads} initialTotalLeads={totalLeads} initialJobs={jobs} initialUsage={usage} />;
 }

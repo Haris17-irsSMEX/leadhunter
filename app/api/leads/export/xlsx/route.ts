@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import type { Lead } from "@/lib/types";
 
@@ -47,6 +49,7 @@ function leadValue(lead: Lead, field: keyof Lead) {
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireUser();
     const jobId = request.nextUrl.searchParams.get("job_id");
     const ids = request.nextUrl.searchParams
       .get("ids")
@@ -54,7 +57,11 @@ export async function GET(request: NextRequest) {
       .map((value) => value.trim())
       .filter(Boolean);
     const supabase = getSupabaseServiceClient();
-    let query = supabase.from("leads").select("*").order("scraped_at", { ascending: false });
+    let query = supabase
+      .from("leads")
+      .select("*")
+      .in("user_id", getAllowedUserIds(user))
+      .order("scraped_at", { ascending: false });
 
     if (ids?.length) {
       query = query.in("id", ids);
@@ -103,9 +110,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Lead Excel export failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Lead Excel export failed.");
   }
 }

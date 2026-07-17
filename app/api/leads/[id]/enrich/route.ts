@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { scrapeWebsite } from "@/lib/sgai";
 import type { Lead } from "@/lib/types";
@@ -77,6 +79,7 @@ async function scrapeWithTimeout(url: string) {
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const user = await requireUser();
     const { id } = await params;
 
     if (!id) {
@@ -84,10 +87,20 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     }
 
     const supabase = getSupabaseServiceClient();
-    const { data: lead, error: fetchError } = await supabase.from("leads").select("*").eq("id", id).single();
+    const allowedUserIds = getAllowedUserIds(user);
+    const { data: lead, error: fetchError } = await supabase
+      .from("leads")
+      .select("*")
+      .eq("id", id)
+      .in("user_id", allowedUserIds)
+      .maybeSingle();
 
     if (fetchError) {
       throw new Error(fetchError.message);
+    }
+
+    if (!lead) {
+      return NextResponse.json({ error: "Lead not found." }, { status: 404 });
     }
 
     const currentLead = lead as Lead;
@@ -99,37 +112,58 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     const normalizedWebsite = normalizeWebsiteUrl(currentLead.website);
     let foundEmail: string | undefined;
     let foundOn: string | undefined;
+    let successfulAttempts = 0;
 
     for (const page of PAGE_PATHS) {
       const targetUrl = `${normalizedWebsite}${page.suffix}`;
-      console.log(`[lead-enrich] Trying URL: ${targetUrl}`);
 
       try {
         const enrichedLead = await scrapeWithTimeout(targetUrl);
-        console.log(`[lead-enrich] Raw scrape response for ${targetUrl}:`, JSON.stringify(enrichedLead, null, 2));
+
+        if (enrichedLead.company_name === "SCRAPE_FAILED") {
+          console.error(`[lead-enrich] Provider request failed for ${targetUrl}`);
+          continue;
+        }
+
+        successfulAttempts += 1;
         const { email, matchedFrom } = extractEmail(enrichedLead);
-        console.log(
-          `[lead-enrich] Regex ${email ? "matched" : "did not match"} for ${targetUrl}${email ? ` via ${matchedFrom}: ${email}` : ""}`,
-        );
 
         if (email) {
           foundEmail = email;
           foundOn = page.foundOn;
           break;
         }
-      } catch {
+      } catch (error) {
+        console.error(
+          `[lead-enrich] Request failed for ${targetUrl}:`,
+          error instanceof Error ? error.message : "Unknown provider error",
+        );
         continue;
       }
     }
 
     if (!foundEmail || !foundOn) {
-      return NextResponse.json({ success: false, message: "No email found on website" });
+      if (!successfulAttempts) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Email enrichment is temporarily unavailable. Please try again later.",
+          },
+          { status: 503 },
+        );
+      }
+
+      return NextResponse.json({
+        success: false,
+        message: "No public email was found on this website.",
+      });
     }
 
     const { data: updatedLead, error: updateError } = await supabase
       .from("leads")
       .update({ email: foundEmail })
       .eq("id", id)
+      .in("user_id", allowedUserIds)
       .select("*")
       .single();
 
@@ -144,9 +178,6 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       foundOn,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Lead enrichment failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Email enrichment is temporarily unavailable. Please try again later.");
   }
 }

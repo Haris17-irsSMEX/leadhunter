@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { clampCommunityLimit, getCommunityConfig } from "@/lib/community-config";
 import {
   scrapeHackerNews,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/community-scrapers";
 import { getSupabaseServiceClient, withScrapedAt } from "@/lib/db";
 import type { Lead } from "@/lib/types";
+import { getAllowedLeadCount } from "@/lib/usage";
 
 export const runtime = "nodejs";
 
@@ -42,7 +45,7 @@ function isProductHuntMode(value: string): value is ProductHuntMode {
   return PRODUCT_HUNT_MODES.has(value as ProductHuntMode);
 }
 
-async function insertCommunityLeads(leads: Lead[]) {
+async function insertCommunityLeads(leads: Lead[], userId: string, allowedUserIds: string[]) {
   if (!leads.length) {
     return { inserted: [] as Lead[], skippedDuplicates: 0, errors: [] as string[] };
   }
@@ -59,7 +62,7 @@ async function insertCommunityLeads(leads: Lead[]) {
       .select("*")
       .eq("source", source)
       .in("source_external_id", externalIds)
-      .or("user_id.eq.default,user_id.is.null");
+      .in("user_id", allowedUserIds);
 
     if (error) {
       throw new Error(error.message);
@@ -81,7 +84,11 @@ async function insertCommunityLeads(leads: Lead[]) {
       continue;
     }
 
-    const { data, error } = await supabase.from("leads").insert(withScrapedAt(lead)).select("*").single();
+    const { data, error } = await supabase
+      .from("leads")
+      .insert(withScrapedAt({ ...lead, user_id: userId }))
+      .select("*")
+      .single();
 
     if (error) {
       if (error.code === "23505") {
@@ -104,6 +111,7 @@ async function insertCommunityLeads(leads: Lead[]) {
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireUser();
     const config = getCommunityConfig();
 
     if (!config.communitiesEnabled) {
@@ -132,6 +140,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "source must be hackernews, reddit, indiehackers, or producthunt." }, { status: 400 });
     }
 
+    const allowedUserIds = getAllowedUserIds(user);
+
     if (source === "hackernews") {
       if (!config.hackerNewsEnabled) {
         return NextResponse.json({ error: "Hacker News scraping is disabled." }, { status: 403 });
@@ -141,8 +151,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Invalid Hacker News mode." }, { status: 400 });
       }
 
-      const scraped = await scrapeHackerNews(mode, query, limit, config);
-      const saved = await insertCommunityLeads(scraped.leads);
+      const { allowed, usage } = await getAllowedLeadCount(user, limit);
+      const scraped = await scrapeHackerNews(mode, query, allowed, config);
+      const saved = await insertCommunityLeads(scraped.leads.slice(0, allowed), user.id, allowedUserIds);
 
       return NextResponse.json({
         count: scraped.leads.length,
@@ -150,6 +161,7 @@ export async function POST(request: NextRequest) {
         skippedDuplicates: saved.skippedDuplicates,
         leads: saved.inserted,
         errors: [...scraped.errors, ...saved.errors],
+        usage,
       });
     }
 
@@ -169,8 +181,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Invalid Indie Hackers mode." }, { status: 400 });
       }
 
-      const scraped = await scrapeIndieHackers(mode, query, limit, config);
-      const saved = await insertCommunityLeads(scraped.leads);
+      const { allowed, usage } = await getAllowedLeadCount(user, limit);
+      const scraped = await scrapeIndieHackers(mode, query, allowed, config);
+      const saved = await insertCommunityLeads(scraped.leads.slice(0, allowed), user.id, allowedUserIds);
 
       return NextResponse.json({
         count: scraped.leads.length,
@@ -178,6 +191,7 @@ export async function POST(request: NextRequest) {
         skippedDuplicates: saved.skippedDuplicates,
         leads: saved.inserted,
         errors: [...scraped.errors, ...saved.errors],
+        usage,
       });
     }
 
@@ -197,8 +211,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Invalid Product Hunt mode." }, { status: 400 });
       }
 
-      const scraped = await scrapeProductHunt(mode, query, limit, config);
-      const saved = await insertCommunityLeads(scraped.leads);
+      const { allowed, usage } = await getAllowedLeadCount(user, limit);
+      const scraped = await scrapeProductHunt(mode, query, allowed, config);
+      const saved = await insertCommunityLeads(scraped.leads.slice(0, allowed), user.id, allowedUserIds);
 
       return NextResponse.json({
         count: scraped.leads.length,
@@ -206,6 +221,7 @@ export async function POST(request: NextRequest) {
         skippedDuplicates: saved.skippedDuplicates,
         leads: saved.inserted,
         errors: [...scraped.errors, ...saved.errors],
+        usage,
       });
     }
 
@@ -221,8 +237,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "query is required for Reddit scraping." }, { status: 400 });
     }
 
-    const scraped = await scrapeReddit(mode, query, limit, config);
-    const saved = await insertCommunityLeads(scraped.leads);
+    const { allowed, usage } = await getAllowedLeadCount(user, limit);
+    const scraped = await scrapeReddit(mode, query, allowed, config);
+    const saved = await insertCommunityLeads(scraped.leads.slice(0, allowed), user.id, allowedUserIds);
 
     return NextResponse.json({
       count: scraped.leads.length,
@@ -230,11 +247,9 @@ export async function POST(request: NextRequest) {
       skippedDuplicates: saved.skippedDuplicates,
       leads: saved.inserted,
       errors: [...scraped.errors, ...saved.errors],
+      usage,
     });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Community scrape failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Community scrape failed.");
   }
 }

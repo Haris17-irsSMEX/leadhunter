@@ -1,26 +1,36 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar";
 import { ToastProvider } from "@/lib/useToast";
 
 export const metadata: Metadata = {
-  title: "LeadHunter",
-  description: "Scrape, track, and export business leads.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://leadhunter.irssmex.com"),
+  title: {
+    default: "LeadHunter - Build Targeted Lead Lists Faster",
+    template: "%s | LeadHunter",
+  },
+  description:
+    "Find business leads from Google Maps and startup communities, organize them, and export them to CSV, Excel, or Google Sheets.",
+  openGraph: {
+    title: "LeadHunter - Build Targeted Lead Lists Faster",
+    description:
+      "Find business leads from Google Maps and startup communities, organize them, and export them to CSV, Excel, or Google Sheets.",
+    type: "website",
+    siteName: "LeadHunter",
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "LeadHunter - Build Targeted Lead Lists Faster",
+    description: "Build targeted lead lists in minutes, not hours.",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
       <body className="bg-[var(--bg)] text-[var(--text-primary)]">
-        <ToastProvider>
-          <div className="flex min-h-screen bg-[var(--bg)]">
-            <Sidebar />
-            <main className="ml-20 min-h-screen flex-1 overflow-y-auto md:ml-[240px]">
-              <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</div>
-            </main>
-          </div>
-        </ToastProvider>
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );

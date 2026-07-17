@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { requireUser } from "@/lib/auth";
 import { insertLeads } from "@/lib/db";
 import { scrapeGoogleMaps } from "@/lib/sgai";
+import { getAllowedLeadCount } from "@/lib/usage";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
+    const user = await requireUser();
     const body = (await request.json()) as {
       query?: string;
       location?: string;
@@ -20,14 +24,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Both query and location are required." }, { status: 400 });
     }
 
-    const leads = await scrapeGoogleMaps(query, location, numResults);
-    const savedLeads = await insertLeads(leads);
+    const { allowed, usage } = await getAllowedLeadCount(user, numResults);
+    const leads = await scrapeGoogleMaps(query, location, allowed);
+    const savedLeads = await insertLeads(leads.slice(0, allowed), user.id);
 
-    return NextResponse.json({ count: savedLeads.length, leads: savedLeads });
+    return NextResponse.json({ count: savedLeads.length, leads: savedLeads, usage });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Google Maps scrape failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Google Maps scrape failed.");
   }
 }

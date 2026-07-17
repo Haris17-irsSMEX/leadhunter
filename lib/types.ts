@@ -37,6 +37,7 @@ export interface ScrapeJob {
   error?: string;
   created_at: string;
   completed_at?: string;
+  user_id?: string;
 }
 
 export interface JobStatus extends ScrapeJob {

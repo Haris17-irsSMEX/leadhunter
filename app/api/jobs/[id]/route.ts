@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import type { JobStatus, Lead, ScrapeJob } from "@/lib/types";
 
@@ -6,9 +8,16 @@ export const runtime = "nodejs";
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const user = await requireUser();
     const { id } = await params;
     const supabase = getSupabaseServiceClient();
-    const { data: job, error: jobError } = await supabase.from("jobs").select("*").eq("id", id).single();
+    const allowedUserIds = getAllowedUserIds(user);
+    const { data: job, error: jobError } = await supabase
+      .from("jobs")
+      .select("*")
+      .eq("id", id)
+      .in("user_id", allowedUserIds)
+      .maybeSingle();
 
     if (jobError || !job) {
       return NextResponse.json({ error: "Job not found." }, { status: 404 });
@@ -21,6 +30,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         .from("leads")
         .select("*")
         .eq("job_id", id)
+        .in("user_id", allowedUserIds)
         .order("scraped_at", { ascending: false })
         .limit(10);
 
@@ -33,9 +43,6 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     return NextResponse.json(status);
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Job status fetch failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Job status fetch failed.");
   }
 }

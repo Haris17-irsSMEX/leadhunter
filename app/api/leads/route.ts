@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import type { Lead } from "@/lib/types";
 
 export const runtime = "nodejs";
+const ALLOWED_SOURCES = new Set<Lead["source"]>([
+  "website",
+  "google_maps",
+  "directory",
+  "hackernews",
+  "reddit",
+  "indiehackers",
+  "producthunt",
+]);
 
 function numberParam(value: string | null, fallback: number) {
   const parsed = Number(value);
@@ -11,6 +22,7 @@ function numberParam(value: string | null, fallback: number) {
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireUser();
     const searchParams = request.nextUrl.searchParams;
     const limit = Math.min(numberParam(searchParams.get("limit"), 50), 500);
     const offset = numberParam(searchParams.get("offset"), 0);
@@ -21,10 +33,15 @@ export async function GET(request: NextRequest) {
     let query = supabase
       .from("leads")
       .select("*", { count: "exact" })
+      .in("user_id", getAllowedUserIds(user))
       .order("scraped_at", { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (source) {
+      if (!ALLOWED_SOURCES.has(source as Lead["source"])) {
+        return NextResponse.json({ error: "Invalid lead source." }, { status: 400 });
+      }
+
       query = query.eq("source", source);
     }
 
@@ -40,15 +57,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ leads: (data ?? []) as Lead[], total: count ?? 0 });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Lead fetch failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Lead fetch failed.");
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
+    const user = await requireUser();
     const searchParams = request.nextUrl.searchParams;
     const id = searchParams.get("id");
     const ids = searchParams
@@ -63,7 +78,11 @@ export async function DELETE(request: NextRequest) {
     }
 
     const supabase = getSupabaseServiceClient();
-    const { error, count } = await supabase.from("leads").delete({ count: "exact" }).in("id", targetIds);
+    const { error, count } = await supabase
+      .from("leads")
+      .delete({ count: "exact" })
+      .in("id", targetIds)
+      .in("user_id", getAllowedUserIds(user));
 
     if (error) {
       throw new Error(error.message);
@@ -71,9 +90,6 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ deletedCount: count ?? targetIds.length });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Lead deletion failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Lead deletion failed.");
   }
 }

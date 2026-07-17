@@ -17,6 +17,7 @@ import {
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import { useToast } from "@/lib/useToast";
 import type { Lead, ScrapeJob } from "@/lib/types";
+import type { UsageSummary } from "@/lib/usage";
 
 type DashboardJob = ScrapeJob & {
   input_summary?: string;
@@ -65,6 +66,22 @@ function sourceBadgeClass(source: Lead["source"]) {
     return "border-violet-400/30 bg-violet-400/10 text-violet-200";
   }
 
+  if (source === "hackernews") {
+    return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+  }
+
+  if (source === "reddit") {
+    return "border-orange-400/30 bg-orange-400/10 text-orange-200";
+  }
+
+  if (source === "indiehackers") {
+    return "border-indigo-400/30 bg-indigo-400/10 text-indigo-200";
+  }
+
+  if (source === "producthunt") {
+    return "border-rose-400/30 bg-rose-400/10 text-rose-200";
+  }
+
   return "border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]";
 }
 
@@ -75,6 +92,22 @@ function sourceLabel(source: Lead["source"]) {
 
   if (source === "directory") {
     return "Directory";
+  }
+
+  if (source === "hackernews") {
+    return "Hacker News";
+  }
+
+  if (source === "reddit") {
+    return "Reddit";
+  }
+
+  if (source === "indiehackers") {
+    return "Indie Hackers";
+  }
+
+  if (source === "producthunt") {
+    return "Product Hunt";
   }
 
   return "Website";
@@ -98,6 +131,10 @@ function statusTone(status: ScrapeJob["status"]) {
 
 function getApiErrorMessage(response: Response, fallback: string) {
   if (response.status === 429) {
+    if (fallback.toLowerCase().includes("monthly") || fallback.toLowerCase().includes("lead limit")) {
+      return fallback;
+    }
+
     return "Too many requests - wait 60 seconds before trying again";
   }
 
@@ -140,9 +177,10 @@ type DashboardClientProps = {
   initialLeads: Lead[];
   initialTotalLeads: number;
   initialJobs: DashboardJob[];
+  initialUsage: UsageSummary;
 };
 
-export default function DashboardClient({ initialLeads, initialTotalLeads, initialJobs }: DashboardClientProps) {
+export default function DashboardClient({ initialLeads, initialTotalLeads, initialJobs, initialUsage }: DashboardClientProps) {
   const router = useRouter();
   const { showToast } = useToast();
   const [leads, setLeads] = useState<Lead[]>(initialLeads);
@@ -152,6 +190,7 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickLead, setQuickLead] = useState<Lead | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
 
   const stats = useMemo(() => {
     const todayKey = new Date().toDateString();
@@ -214,6 +253,25 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
         <StatCard label="Scraped Today" value={stats.scrapedToday} icon={Compass} tone="bg-[rgba(52,211,153,0.12)] text-[var(--success)]" />
         <StatCard label="Google Maps Leads" value={stats.googleMapsLeads} icon={MapPinned} tone="bg-[rgba(91,127,255,0.12)] text-blue-300" />
         <StatCard label="Jobs Run" value={stats.jobsRun} icon={Workflow} tone="bg-[rgba(251,191,36,0.12)] text-[var(--warning)]" />
+      </section>
+
+      <section className="app-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="app-label">{initialUsage.planLabel} plan</p>
+          <p className="mt-2 text-lg font-semibold text-white">
+            {initialUsage.isAdmin
+              ? "Internal testing access"
+              : `${initialUsage.used} of ${initialUsage.limit} leads used this month`}
+          </p>
+          {!initialUsage.isAdmin ? (
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">{initialUsage.remaining} leads remaining.</p>
+          ) : null}
+        </div>
+        {!initialUsage.isAdmin ? (
+          <a href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`} className="btn-secondary justify-center">
+            Request plan upgrade
+          </a>
+        ) : null}
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">

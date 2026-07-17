@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/api-errors";
+import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import type { ScrapeJob } from "@/lib/types";
 
@@ -22,8 +24,15 @@ function summarizeSourceUrl(value?: string) {
 
 export async function GET() {
   try {
+    const user = await requireUser();
     const supabase = getSupabaseServiceClient();
-    const { data, error } = await supabase.from("jobs").select("*").order("created_at", { ascending: false }).limit(20);
+    const allowedUserIds = getAllowedUserIds(user);
+    const { data, error } = await supabase
+      .from("jobs")
+      .select("*")
+      .in("user_id", allowedUserIds)
+      .order("created_at", { ascending: false })
+      .limit(20);
 
     if (error) {
       throw new Error(error.message);
@@ -38,6 +47,7 @@ export async function GET() {
         .from("leads")
         .select("job_id, source_url")
         .in("job_id", jobIds)
+        .in("user_id", allowedUserIds)
         .order("scraped_at", { ascending: false });
 
       if (leadError) {
@@ -61,9 +71,6 @@ export async function GET() {
 
     return NextResponse.json({ jobs: payload });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Jobs fetch failed." },
-      { status: 500 },
-    );
+    return apiErrorResponse(error, "Jobs fetch failed.");
   }
 }

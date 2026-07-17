@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload } from "lucide-react";
 import JobStatusCard from "@/components/JobStatusCard";
 import { getLeadBadge } from "@/lib/leadScoring";
@@ -67,26 +67,6 @@ const indieHackersModeOptions: Array<{ label: string; value: IndieHackersMode }>
 
 const productHuntModeOptions: Array<{ label: string; value: ProductHuntMode }> = [
   { label: "Front Page", value: "front_page" },
-];
-
-const indieHackersEnabled = process.env.INDIEHACKERS_ENABLED?.trim().toLowerCase() === "true";
-const productHuntEnabled = process.env.PRODUCTHUNT_ENABLED?.trim().toLowerCase() === "true";
-
-const communitySources: Array<{ key: CommunitySource; label: string; helper: string; disabled: boolean }> = [
-  { key: "hackernews", label: "Hacker News", helper: "Launches, discussions, and hiring intent", disabled: false },
-  { key: "reddit", label: "Reddit", helper: "Experimental public post search", disabled: false },
-  {
-    key: "indiehackers",
-    label: "Indie Hackers",
-    helper: indieHackersEnabled ? "Public product listings" : "Requires ScrapeGraphAI credits",
-    disabled: !indieHackersEnabled,
-  },
-  {
-    key: "producthunt",
-    label: "Product Hunt",
-    helper: productHuntEnabled ? "Experimental front-page launches" : "Requires ScrapeGraphAI credits",
-    disabled: !productHuntEnabled,
-  },
 ];
 
 function resultBadge(lead: Lead) {
@@ -209,6 +189,57 @@ export default function FinderPage() {
   const [communityLoading, setCommunityLoading] = useState(false);
   const [communityError, setCommunityError] = useState("");
   const [communityResult, setCommunityResult] = useState<CommunityResult | null>(null);
+  const [communityAvailability, setCommunityAvailability] = useState({
+    communities: true,
+    hackernews: true,
+    reddit: true,
+    indiehackers: false,
+    producthunt: false,
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    void fetch("/api/community-config", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: typeof communityAvailability | null) => {
+        if (active && payload) {
+          setCommunityAvailability(payload);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const communitySources: Array<{ key: CommunitySource; label: string; helper: string; disabled: boolean }> = [
+    {
+      key: "hackernews",
+      label: "Hacker News",
+      helper: "Launches, discussions, and hiring intent",
+      disabled: !communityAvailability.communities || !communityAvailability.hackernews,
+    },
+    {
+      key: "reddit",
+      label: "Reddit",
+      helper: "Experimental public post search",
+      disabled: !communityAvailability.communities || !communityAvailability.reddit,
+    },
+    {
+      key: "indiehackers",
+      label: "Indie Hackers",
+      helper: communityAvailability.indiehackers ? "Public product listings" : "Requires ScrapeGraphAI credits",
+      disabled: !communityAvailability.communities || !communityAvailability.indiehackers,
+    },
+    {
+      key: "producthunt",
+      label: "Product Hunt",
+      helper: communityAvailability.producthunt ? "Experimental front-page launches" : "Requires ScrapeGraphAI credits",
+      disabled: !communityAvailability.communities || !communityAvailability.producthunt,
+    },
+  ];
 
   const bulkUrls = useMemo(() => {
     return bulkText
@@ -237,7 +268,11 @@ export default function FinderPage() {
 
   function getApiErrorMessage(response: Response, fallback: string) {
     if (response.status === 429) {
-      return "Too many requests — wait 60 seconds before trying again";
+      if (fallback.toLowerCase().includes("monthly") || fallback.toLowerCase().includes("lead limit")) {
+        return fallback;
+      }
+
+      return "Too many requests - wait 60 seconds before trying again";
     }
 
     return fallback;
@@ -249,6 +284,12 @@ export default function FinderPage() {
     }
 
     if (response.status === 429) {
+      const message = payload.error ?? payload.message;
+
+      if (message?.toLowerCase().includes("monthly") || message?.toLowerCase().includes("lead limit")) {
+        return message;
+      }
+
       return "Too many requests - wait 60 seconds before trying again";
     }
 

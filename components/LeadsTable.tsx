@@ -211,9 +211,7 @@ function LeadRow({
   const rowId = lead.id ?? `${lead.company_name}-${lead.source_url}`;
   const industry = industryPreview(lead.industry);
   const canFindEmail = needsEmailEnrichment(lead);
-  const isCommunityLead =
-    lead.source === "hackernews" || lead.source === "reddit" || lead.source === "indiehackers" || lead.source === "producthunt";
-  const emailButtonLabel = isCommunityLead ? "Try email" : "Find email";
+  const emailButtonLabel = "Find email";
 
   return (
     <>
@@ -240,7 +238,7 @@ function LeadRow({
                 }}
                 className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-2 py-1 text-[11px] font-medium text-[var(--accent)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label={`${emailButtonLabel} for ${lead.company_name}`}
-                title={isCommunityLead ? "Community leads often need a website check before email enrichment." : undefined}
+                title="Search public contact and about pages when available."
               >
                 {isEnriching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />}
                 <Sparkles className="h-3 w-3" />
@@ -285,7 +283,7 @@ function LeadRow({
                 onClick={onEnrichEmail}
                 className="icon-button h-7 w-7 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
                 aria-label={`${emailButtonLabel} for ${lead.company_name}`}
-                title={isCommunityLead ? "Community leads often need a website check before email enrichment." : undefined}
+                title="Search public contact and about pages when available."
               >
                 {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               </button>
@@ -350,6 +348,10 @@ export default function LeadsTable() {
 
   function getApiErrorMessage(response: Response, fallback: string) {
     if (response.status === 429) {
+      if (fallback.toLowerCase().includes("monthly") || fallback.toLowerCase().includes("lead limit")) {
+        return fallback;
+      }
+
       return "Too many requests - wait 60 seconds before trying again";
     }
 
@@ -568,16 +570,25 @@ export default function LeadsTable() {
 
     try {
       const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich`, { method: "POST" });
-      const payload = (await parseResponseSafely(response)) as unknown as Lead & { error?: string };
+      const payload = (await parseResponseSafely(response)) as unknown as Lead & {
+        error?: string;
+        message?: string;
+        success?: boolean;
+      };
 
       if (!response.ok) {
         throw new Error(getApiErrorMessage(response, payload.error ?? "Unable to enrich lead."));
       }
 
-      updateLead(payload);
+      if (payload.id) {
+        updateLead(payload);
+      }
 
       if (!options.quiet) {
-        showToast(payload.email ? "Email found and saved." : "No email found for this lead.", payload.email ? "success" : "error");
+        showToast(
+          payload.email ? "Email found and saved." : payload.message ?? "No public email was found on this website.",
+          payload.email ? "success" : "error",
+        );
       }
 
       return payload;
@@ -773,7 +784,7 @@ export default function LeadsTable() {
             </button>
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary">
               <FileSpreadsheet className="h-4 w-4" />
-              Export selected to Sheets
+              Sync selected to Sheets
             </button>
             <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
               {exporting ? "Exporting..." : "Export CSV"}

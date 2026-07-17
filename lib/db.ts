@@ -16,9 +16,13 @@ export function withScrapedAt(lead: Lead): Lead {
   };
 }
 
-export async function insertLead(lead: Lead) {
+export async function insertLead(lead: Lead, userId: string) {
   const supabase = getSupabaseServiceClient();
-  const { data, error } = await supabase.from("leads").insert(withScrapedAt(lead)).select("*").single();
+  const { data, error } = await supabase
+    .from("leads")
+    .insert(withScrapedAt({ ...lead, user_id: userId }))
+    .select("*")
+    .single();
 
   if (error) {
     throw new Error(error.message);
@@ -27,7 +31,7 @@ export async function insertLead(lead: Lead) {
   return data as Lead;
 }
 
-export async function insertLeads(leads: Lead[]) {
+export async function insertLeads(leads: Lead[], userId: string) {
   if (!leads.length) {
     return [];
   }
@@ -35,7 +39,7 @@ export async function insertLeads(leads: Lead[]) {
   const supabase = getSupabaseServiceClient();
   const { data, error } = await supabase
     .from("leads")
-    .insert(leads.map((lead) => withScrapedAt(lead)))
+    .insert(leads.map((lead) => withScrapedAt({ ...lead, user_id: userId })))
     .select("*");
 
   if (error) {
@@ -45,9 +49,9 @@ export async function insertLeads(leads: Lead[]) {
   return (data ?? []) as Lead[];
 }
 
-export async function insertJob(job: ScrapeJob) {
+export async function insertJob(job: ScrapeJob, userId: string) {
   const supabase = getSupabaseServiceClient();
-  const { data, error } = await supabase.from("jobs").insert(job).select("*").single();
+  const { data, error } = await supabase.from("jobs").insert({ ...job, user_id: userId }).select("*").single();
 
   if (error) {
     throw new Error(error.message);
@@ -56,9 +60,15 @@ export async function insertJob(job: ScrapeJob) {
   return data as ScrapeJob;
 }
 
-export async function updateJob(id: string, values: Partial<ScrapeJob>) {
+export async function updateJob(id: string, values: Partial<ScrapeJob>, userId: string) {
   const supabase = getSupabaseServiceClient();
-  const { data, error } = await supabase.from("jobs").update(values).eq("id", id).select("*").single();
+  const { data, error } = await supabase
+    .from("jobs")
+    .update(values)
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select("*")
+    .single();
 
   if (error) {
     throw new Error(error.message);
