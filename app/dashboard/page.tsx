@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import DashboardClient from "@/components/DashboardClient";
-import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { getAllowedUserIds } from "@/lib/auth";
+import { requirePageUser } from "@/lib/page-auth";
 import type { Lead, ScrapeJob } from "@/lib/types";
 import { getUsageSummary } from "@/lib/usage";
 
@@ -23,7 +24,7 @@ function summarizeSourceUrl(value?: string) {
 }
 
 async function loadDashboardData() {
-  const user = await requireUser();
+  const user = await requirePageUser();
   const allowedUserIds = getAllowedUserIds(user);
   const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 

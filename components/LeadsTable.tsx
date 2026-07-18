@@ -170,6 +170,20 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+function filenameFromDisposition(disposition: string | null, fallback: string) {
+  if (!disposition) {
+    return fallback;
+  }
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].replace(/"/g, ""));
+  }
+
+  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return filenameMatch?.[1] ?? fallback;
+}
+
 function DetailField({ label, value }: { label: string; value?: string | string[] }) {
   const display = emptyText(value);
 
@@ -654,7 +668,7 @@ export default function LeadsTable() {
       }
 
       const blob = await response.blob();
-      triggerBlobDownload(blob, format === "xlsx" ? "leads.xlsx" : "leads.csv");
+      triggerBlobDownload(blob, filenameFromDisposition(response.headers.get("content-disposition"), format === "xlsx" ? "leads.xlsx" : "leads.csv"));
       showToast(`${format.toUpperCase()} export complete.`, "success");
     } catch (exportError) {
       const message = exportError instanceof Error ? exportError.message : `Lead ${format.toUpperCase()} export failed.`;

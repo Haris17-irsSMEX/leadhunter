@@ -3,6 +3,8 @@ import "server-only";
 import { createClient, type User } from "@supabase/supabase-js";
 import { cookies, headers } from "next/headers";
 import { AUTH_ACCESS_COOKIE, VERIFIED_ACCESS_HEADER } from "@/lib/auth-constants";
+import { getSupabaseServiceClient } from "@/lib/db";
+import type { ProfileStatus } from "@/lib/types";
 
 function getSupabaseAuthClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -63,7 +65,43 @@ export async function requireUser() {
     throw new AuthenticationError();
   }
 
+  const status = await getProfileStatus(user.id);
+
+  if (status === "disabled") {
+    throw new AccountDisabledError();
+  }
+
   return user;
+}
+
+export async function requireAdmin() {
+  const user = await requireUser();
+
+  if (!isAdminUser(user)) {
+    throw new AuthorizationError();
+  }
+
+  return user;
+}
+
+async function getProfileStatus(userId: string): Promise<ProfileStatus> {
+  const supabase = getSupabaseServiceClient();
+  const { data, error } = await supabase.from("profiles").select("status").eq("user_id", userId).maybeSingle();
+
+  if (error) {
+    const migrationPending =
+      error.code === "42703" ||
+      error.code === "PGRST204" ||
+      error.message.includes("Could not find the 'status' column");
+
+    if (migrationPending) {
+      return "active";
+    }
+
+    throw new Error("Unable to verify account status.");
+  }
+
+  return data?.status === "disabled" ? "disabled" : "active";
 }
 
 export class AuthenticationError extends Error {
@@ -72,5 +110,25 @@ export class AuthenticationError extends Error {
   constructor() {
     super("Authentication required.");
     this.name = "AuthenticationError";
+  }
+}
+
+export class AuthorizationError extends Error {
+  readonly code = "FORBIDDEN";
+  readonly status = 403;
+
+  constructor() {
+    super("Admin access is required.");
+    this.name = "AuthorizationError";
+  }
+}
+
+export class AccountDisabledError extends Error {
+  readonly code = "ACCOUNT_DISABLED";
+  readonly status = 403;
+
+  constructor() {
+    super("Your LeadHunter account is disabled. Contact support.");
+    this.name = "AccountDisabledError";
   }
 }

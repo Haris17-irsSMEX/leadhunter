@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowUpRight, LayoutDashboard, Link2, LogOut, Search, Users, Zap } from "lucide-react";
+import { ArrowUpRight, LayoutDashboard, Link2, LogOut, Search, ShieldCheck, Users, Zap } from "lucide-react";
 
 const links = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -21,7 +21,7 @@ type Usage = {
   isAdmin: boolean;
 };
 
-export default function Sidebar({ userEmail }: { userEmail: string }) {
+export default function Sidebar({ userEmail, isAdmin }: { userEmail: string; isAdmin: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -65,7 +65,7 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
 
       <nav className="flex-1 px-2 py-4 md:px-0">
         <div className="space-y-1 md:px-4">
-          {links.map((link) => {
+          {[...links, ...(isAdmin ? [{ href: "/admin", label: "Admin", icon: ShieldCheck }] : [])].map((link) => {
             const active = pathname === link.href;
             const Icon = link.icon;
 

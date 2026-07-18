@@ -7,7 +7,15 @@ import {
   VERIFIED_ACCESS_HEADER,
 } from "@/lib/auth-constants";
 
-const PUBLIC_PATHS = new Set(["/", "/login", "/privacy", "/terms", "/sitemap.xml", "/robots.txt"]);
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/login",
+  "/account-disabled",
+  "/privacy",
+  "/terms",
+  "/sitemap.xml",
+  "/robots.txt",
+]);
 const PUBLIC_PREFIXES = ["/auth/", "/api/auth/", "/api/health"];
 
 function isPublicPath(pathname: string) {
@@ -54,8 +62,31 @@ export async function proxy(request: NextRequest) {
     accessToken = refreshedSession?.access_token;
   }
 
+  let accountDisabled = false;
+
+  if (user && accessToken) {
+    const profileClient = createClient(url, anonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    });
+    const { data: profile } = await profileClient
+      .from("profiles")
+      .select("status")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    accountDisabled = profile?.status === "disabled";
+  }
+
   if (pathname === "/login" && user) {
-    const response = NextResponse.redirect(new URL("/dashboard", request.url));
+    const response = NextResponse.redirect(new URL(accountDisabled ? "/account-disabled" : "/dashboard", request.url));
 
     if (refreshedSession) {
       response.cookies.set(AUTH_ACCESS_COOKIE, refreshedSession.access_token, {
@@ -79,6 +110,19 @@ export async function proxy(request: NextRequest) {
     return pathname.startsWith("/api/")
       ? NextResponse.json({ code: "UNAUTHORIZED", error: "Authentication required." }, { status: 401 })
       : loginRedirect(request);
+  }
+
+  if (accountDisabled) {
+    return pathname.startsWith("/api/")
+      ? NextResponse.json(
+          {
+            code: "ACCOUNT_DISABLED",
+            error: "Your LeadHunter account is disabled. Contact support.",
+            message: "Your LeadHunter account is disabled. Contact support.",
+          },
+          { status: 403 },
+        )
+      : NextResponse.redirect(new URL("/account-disabled", request.url));
   }
 
   const requestHeaders = new Headers(request.headers);

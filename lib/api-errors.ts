@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
-import { AuthenticationError } from "@/lib/auth";
+import { AccountDisabledError, AuthenticationError, AuthorizationError } from "@/lib/auth";
 import { MonthlyLimitError } from "@/lib/usage";
 
 export function apiErrorResponse(error: unknown, fallback: string) {
   if (error instanceof AuthenticationError) {
     return NextResponse.json({ code: "UNAUTHORIZED", error: error.message }, { status: error.status });
+  }
+
+  if (error instanceof AccountDisabledError || error instanceof AuthorizationError) {
+    return NextResponse.json(
+      { code: error.code, error: error.message, message: error.message },
+      { status: error.status },
+    );
   }
 
   if (error instanceof MonthlyLimitError) {

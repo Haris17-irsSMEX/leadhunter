@@ -1,3 +1,5 @@
+import type { PlanName } from "@/lib/plans";
+
 export interface Lead {
   id?: string;
   company_name: string;
@@ -42,4 +44,15 @@ export interface ScrapeJob {
 
 export interface JobStatus extends ScrapeJob {
   leads?: Lead[];
+}
+
+export type ProfileStatus = "active" | "disabled";
+
+export interface Profile {
+  user_id: string;
+  plan: PlanName;
+  status: ProfileStatus;
+  admin_notes?: string | null;
+  created_at: string;
+  updated_at: string;
 }
