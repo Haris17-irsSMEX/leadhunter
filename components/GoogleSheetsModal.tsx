@@ -36,7 +36,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
   const [recentCount, setRecentCount] = useState(20);
   const [loadingMode, setLoadingMode] = useState<SheetMode | null>(null);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState<{ rowsWritten: number; url: string } | null>(null);
+  const [success, setSuccess] = useState<{ rowsWritten: number; url: string; warnings: string[] } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -99,8 +99,9 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
 
       const rowsWritten = typeof payload.rowsWritten === "number" ? payload.rowsWritten : 0;
       const url = String(payload.spreadsheetUrl ?? payload.url ?? "");
+      const warnings = Array.isArray(payload.warnings) ? payload.warnings.map(String) : [];
 
-      setSuccess({ rowsWritten, url });
+      setSuccess({ rowsWritten, url, warnings });
       showToast(`Google Sheets updated with ${rowsWritten} rows.`, "success");
       onActionComplete?.();
     } catch (exportError) {
@@ -140,6 +141,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
             <div>
               <h2 id="sheets-modal-title" className="app-section-title">Sync to Google Sheets</h2>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">Share your spreadsheet with LeadHunter, then choose what to sync.</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Google Sheets uses the same clean export columns as CSV and Excel.</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="icon-button" aria-label="Close Google Sheets modal">
@@ -252,6 +254,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
               <a href={success.url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-4">
                 Open Sheet
               </a>
+              {success.warnings.length ? <span className="mt-2 block text-xs text-amber-200">{success.warnings.join(" ")}</span> : null}
             </div>
           ) : null}
 

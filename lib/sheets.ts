@@ -4,16 +4,16 @@ import type { Lead } from "@/lib/types";
 export const HEADERS = [
   "Company Name",
   "Website",
-  "Description",
-  "Founder",
   "Email",
   "Phone",
-  "LinkedIn",
-  "Twitter",
   "Location",
   "Country",
   "Industry",
-  "Employees",
+  "Description",
+  "Founder Name",
+  "LinkedIn",
+  "Twitter",
+  "Employee Count",
   "Pricing",
   "Tech Stack",
   "Source",
@@ -44,19 +44,55 @@ type SpreadsheetMetadata = {
   sheets?: SpreadsheetSheet[];
 };
 
-type ValuesResponse = {
-  values?: string[][];
+type SheetsExportResult = {
+  spreadsheetUrl: string;
+  rowsWritten: number;
+  warnings?: string[];
 };
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const TOKEN_AUDIENCE = "https://oauth2.googleapis.com/token";
 
-function cell(value: unknown) {
-  if (value == null) {
+function cleanText(value: string | string[] | null | undefined) {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean).join(", ");
+  }
+
+  return value?.trim() ?? "";
+}
+
+function sourceLabel(source: Lead["source"]) {
+  const labels: Record<Lead["source"], string> = {
+    website: "Website",
+    google_maps: "Google Maps",
+    directory: "Directory",
+    hackernews: "Hacker News",
+    reddit: "Reddit",
+    indiehackers: "Indie Hackers",
+    producthunt: "Product Hunt",
+  };
+
+  return labels[source] ?? cleanText(source);
+}
+
+function formatDate(value?: string) {
+  if (!value) {
     return "";
   }
 
-  return String(value);
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return cleanText(value);
+  }
+
+  const yyyy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const min = String(date.getUTCMinutes()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
 }
 
 function getCredentials(): ResolvedGoogleCredentials {
@@ -83,23 +119,23 @@ function getCredentials(): ResolvedGoogleCredentials {
 
 export function leadToRow(lead: Lead): string[] {
   return [
-    cell(lead.company_name),
-    cell(lead.website),
-    cell(lead.description),
-    cell(lead.founder_name),
-    cell(lead.email),
-    cell(lead.phone),
-    cell(lead.linkedin_url),
-    cell(lead.twitter_handle),
-    cell(lead.location),
-    cell(lead.country),
-    cell(lead.industry),
-    cell(lead.employee_count),
-    cell(lead.pricing_model),
-    Array.isArray(lead.tech_stack) ? lead.tech_stack.join(", ") : "",
-    cell(lead.source),
-    cell(lead.source_url),
-    cell(lead.scraped_at),
+    cleanText(lead.company_name),
+    cleanText(lead.website),
+    cleanText(lead.email),
+    cleanText(lead.phone),
+    cleanText(lead.location),
+    cleanText(lead.country),
+    cleanText(lead.industry),
+    cleanText(lead.description),
+    cleanText(lead.founder_name),
+    cleanText(lead.linkedin_url),
+    cleanText(lead.twitter_handle),
+    cleanText(lead.employee_count),
+    cleanText(lead.pricing_model),
+    cleanText(lead.tech_stack),
+    sourceLabel(lead.source),
+    cleanText(lead.source_url),
+    formatDate(lead.scraped_at),
   ];
 }
 
@@ -208,13 +244,6 @@ async function addSheet(token: string, spreadsheetId: string, sheetName: string)
   return data.replies?.[0]?.addSheet;
 }
 
-async function getRangeValues(token: string, spreadsheetId: string, sheetName: string, range: string) {
-  return sheetsRequest<ValuesResponse>(
-    token,
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetRange(sheetName, range)}`,
-  );
-}
-
 async function updateValues(
   token: string,
   spreadsheetId: string,
@@ -263,7 +292,7 @@ async function clearValues(token: string, spreadsheetId: string, sheetName: stri
   );
 }
 
-async function boldHeaderRow(token: string, spreadsheetId: string, sheetId: number) {
+async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: number) {
   await sheetsRequest(
     token,
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
@@ -273,20 +302,53 @@ async function boldHeaderRow(token: string, spreadsheetId: string, sheetId: numb
       body: JSON.stringify({
         requests: [
           {
+            updateSheetProperties: {
+              properties: {
+                sheetId,
+                gridProperties: {
+                  frozenRowCount: 1,
+                },
+              },
+              fields: "gridProperties.frozenRowCount",
+            },
+          },
+          {
             repeatCell: {
               range: {
                 sheetId,
                 startRowIndex: 0,
                 endRowIndex: 1,
+                startColumnIndex: 0,
+                endColumnIndex: HEADERS.length,
               },
               cell: {
                 userEnteredFormat: {
+                  backgroundColor: {
+                    red: 0.486,
+                    green: 0.361,
+                    blue: 0.988,
+                  },
                   textFormat: {
                     bold: true,
+                    foregroundColor: {
+                      red: 1,
+                      green: 1,
+                      blue: 1,
+                    },
                   },
                 },
               },
-              fields: "userEnteredFormat.textFormat.bold",
+              fields: "userEnteredFormat(backgroundColor,textFormat)",
+            },
+          },
+          {
+            autoResizeDimensions: {
+              dimensions: {
+                sheetId,
+                dimension: "COLUMNS",
+                startIndex: 0,
+                endIndex: HEADERS.length,
+              },
             },
           },
         ],
@@ -295,9 +357,8 @@ async function boldHeaderRow(token: string, spreadsheetId: string, sheetId: numb
   );
 }
 
-async function writeHeaders(token: string, spreadsheetId: string, sheetName: string, sheetId: number) {
+async function writeHeaders(token: string, spreadsheetId: string, sheetName: string) {
   await updateValues(token, spreadsheetId, sheetName, "A1:Q1", [HEADERS]);
-  await boldHeaderRow(token, spreadsheetId, sheetId);
 }
 
 async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string) {
@@ -314,43 +375,59 @@ async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName:
     throw new Error(`Unable to resolve sheet "${sheetName}"`);
   }
 
-  const existingHeader = await getRangeValues(token, spreadsheetId, sheetName, "A1:Q1");
-  const hasData = Boolean(existingHeader.values?.some((row) => row.some((value) => cell(value).trim().length > 0)));
+  await writeHeaders(token, spreadsheetId, sheetName);
 
-  if (!hasData) {
-    await writeHeaders(token, spreadsheetId, sheetName, sheetId);
-  }
-
-  return sheet;
+  return { sheet, sheetId };
 }
 
-export async function exportLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads") {
-  const token = await getAccessToken();
+function formattingWarning(error: unknown) {
+  const detail = error instanceof Error ? error.message : "Unknown formatting error";
+  return `Google Sheets values synced, but formatting could not be applied: ${detail}`;
+}
 
-  await getOrCreateSheet(token, spreadsheetId, sheetName);
+export async function exportLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads"): Promise<SheetsExportResult> {
+  const token = await getAccessToken();
+  const warnings: string[] = [];
+
+  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
 
   if (leads.length) {
     await appendValues(token, spreadsheetId, sheetName, "A1", leads.map(leadToRow));
   }
 
+  try {
+    await formatLeadSheet(token, spreadsheetId, sheetId);
+  } catch (error) {
+    warnings.push(formattingWarning(error));
+  }
+
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
     rowsWritten: leads.length,
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 
-export async function syncLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads") {
+export async function syncLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads"): Promise<SheetsExportResult> {
   const token = await getAccessToken();
+  const warnings: string[] = [];
 
-  await getOrCreateSheet(token, spreadsheetId, sheetName);
+  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
   await clearValues(token, spreadsheetId, sheetName, "A2:Z");
 
   if (leads.length) {
     await appendValues(token, spreadsheetId, sheetName, "A2", leads.map(leadToRow));
   }
 
+  try {
+    await formatLeadSheet(token, spreadsheetId, sheetId);
+  } catch (error) {
+    warnings.push(formattingWarning(error));
+  }
+
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
     rowsWritten: leads.length,
+    ...(warnings.length ? { warnings } : {}),
   };
 }
