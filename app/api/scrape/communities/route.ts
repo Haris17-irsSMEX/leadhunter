@@ -47,7 +47,7 @@ function isProductHuntMode(value: string): value is ProductHuntMode {
 
 async function insertCommunityLeads(leads: Lead[], userId: string, allowedUserIds: string[]) {
   if (!leads.length) {
-    return { inserted: [] as Lead[], skippedDuplicates: 0, errors: [] as string[] };
+    return { inserted: [] as Lead[], skippedDuplicates: 0, leads: [] as Lead[], errors: [] as string[] };
   }
 
   const supabase = getSupabaseServiceClient();
@@ -76,11 +76,15 @@ async function insertCommunityLeads(leads: Lead[], userId: string, allowedUserId
   }
 
   const inserted: Lead[] = [];
+  const resultLeads: Lead[] = [];
   let skippedDuplicates = 0;
 
   for (const lead of leads) {
-    if (lead.source_external_id && existingByExternalId.has(lead.source_external_id)) {
+    const existing = lead.source_external_id ? existingByExternalId.get(lead.source_external_id) : undefined;
+
+    if (existing) {
       skippedDuplicates += 1;
+      resultLeads.push({ ...existing, scrape_status: "already_saved" });
       continue;
     }
 
@@ -93,6 +97,7 @@ async function insertCommunityLeads(leads: Lead[], userId: string, allowedUserId
     if (error) {
       if (error.code === "23505") {
         skippedDuplicates += 1;
+        resultLeads.push({ ...lead, scrape_status: "skipped_duplicate" });
         continue;
       }
 
@@ -100,13 +105,15 @@ async function insertCommunityLeads(leads: Lead[], userId: string, allowedUserId
       continue;
     }
 
-    inserted.push(data as Lead);
+    const insertedLead = { ...(data as Lead), scrape_status: "new" as const };
+    inserted.push(insertedLead);
+    resultLeads.push(insertedLead);
     if (lead.source_external_id) {
       existingByExternalId.set(lead.source_external_id, data as Lead);
     }
   }
 
-  return { inserted, skippedDuplicates, errors };
+  return { inserted, skippedDuplicates, leads: resultLeads, errors };
 }
 
 export async function POST(request: NextRequest) {
@@ -159,7 +166,7 @@ export async function POST(request: NextRequest) {
         count: scraped.leads.length,
         inserted: saved.inserted.length,
         skippedDuplicates: saved.skippedDuplicates,
-        leads: saved.inserted,
+        leads: saved.leads,
         errors: [...scraped.errors, ...saved.errors],
         usage,
       });
@@ -189,7 +196,7 @@ export async function POST(request: NextRequest) {
         count: scraped.leads.length,
         inserted: saved.inserted.length,
         skippedDuplicates: saved.skippedDuplicates,
-        leads: saved.inserted,
+        leads: saved.leads,
         errors: [...scraped.errors, ...saved.errors],
         usage,
       });
@@ -219,7 +226,7 @@ export async function POST(request: NextRequest) {
         count: scraped.leads.length,
         inserted: saved.inserted.length,
         skippedDuplicates: saved.skippedDuplicates,
-        leads: saved.inserted,
+        leads: saved.leads,
         errors: [...scraped.errors, ...saved.errors],
         usage,
       });
@@ -245,7 +252,7 @@ export async function POST(request: NextRequest) {
       count: scraped.leads.length,
       inserted: saved.inserted.length,
       skippedDuplicates: saved.skippedDuplicates,
-      leads: saved.inserted,
+      leads: saved.leads,
       errors: [...scraped.errors, ...saved.errors],
       usage,
     });

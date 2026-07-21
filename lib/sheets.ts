@@ -1,14 +1,34 @@
 import * as jose from "jose";
+import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
+import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { Lead } from "@/lib/types";
 
 export const HEADERS = [
   "Company Name",
   "Website",
   "Email",
+  "Email Source",
+  "Email Confidence",
   "Phone",
   "Location",
   "Country",
   "Industry",
+  "Uber Eats",
+  "Uber Eats Menu URL",
+  "Uber Eats Confidence",
+  "DoorDash",
+  "DoorDash Menu URL",
+  "DoorDash Confidence",
+  "Grubhub",
+  "Grubhub Menu URL",
+  "Grubhub Confidence",
+  "Deliveroo",
+  "Deliveroo Menu URL",
+  "Deliveroo Confidence",
+  "Just Eat",
+  "Just Eat Menu URL",
+  "Just Eat Confidence",
+  "Restaurant Enrichment",
   "Description",
   "Founder Name",
   "LinkedIn",
@@ -59,6 +79,21 @@ function cleanText(value: string | string[] | null | undefined) {
   }
 
   return value?.trim() ?? "";
+}
+
+function cleanNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function restaurantEnrichmentLabel(value: Lead["restaurant_enrichment_status"]) {
+  const labels = {
+    completed: "Completed",
+    partial: "Partial",
+    error: "Error",
+    not_checked: "Not checked",
+  };
+
+  return value ? labels[value] : "";
 }
 
 function sourceLabel(source: Lead["source"]) {
@@ -121,11 +156,29 @@ export function leadToRow(lead: Lead): string[] {
   return [
     cleanText(lead.company_name),
     cleanText(lead.website),
-    cleanText(lead.email),
+    cleanSafePublicEmail(lead.email),
+    cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : "",
+    cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "",
     cleanText(lead.phone),
     cleanText(lead.location),
     cleanText(lead.country),
     cleanText(lead.industry),
+    deliveryStatusLabelForLead(lead, "ubereats"),
+    cleanText(lead.delivery_ubereats_menu_url),
+    cleanNumber(lead.delivery_ubereats_confidence),
+    deliveryStatusLabelForLead(lead, "doordash"),
+    cleanText(lead.delivery_doordash_menu_url),
+    cleanNumber(lead.delivery_doordash_confidence),
+    deliveryStatusLabelForLead(lead, "grubhub"),
+    cleanText(lead.delivery_grubhub_menu_url),
+    cleanNumber(lead.delivery_grubhub_confidence),
+    deliveryStatusLabelForLead(lead, "deliveroo"),
+    cleanText(lead.delivery_deliveroo_menu_url),
+    cleanNumber(lead.delivery_deliveroo_confidence),
+    deliveryStatusLabelForLead(lead, "justeat"),
+    cleanText(lead.delivery_justeat_menu_url),
+    cleanNumber(lead.delivery_justeat_confidence),
+    restaurantEnrichmentLabel(lead.restaurant_enrichment_status),
     cleanText(lead.description),
     cleanText(lead.founder_name),
     cleanText(lead.linkedin_url),
@@ -358,7 +411,7 @@ async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: nu
 }
 
 async function writeHeaders(token: string, spreadsheetId: string, sheetName: string) {
-  await updateValues(token, spreadsheetId, sheetName, "A1:Q1", [HEADERS]);
+  await updateValues(token, spreadsheetId, sheetName, "A1:AI1", [HEADERS]);
 }
 
 async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string) {
@@ -413,7 +466,7 @@ export async function syncLeadsToSheet(spreadsheetId: string, leads: Lead[], she
   const warnings: string[] = [];
 
   const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
-  await clearValues(token, spreadsheetId, sheetName, "A2:Z");
+  await clearValues(token, spreadsheetId, sheetName, "A2:AI");
 
   if (leads.length) {
     await appendValues(token, spreadsheetId, sheetName, "A2", leads.map(leadToRow));

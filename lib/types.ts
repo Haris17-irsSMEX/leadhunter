@@ -18,6 +18,8 @@ export interface Lead {
   tech_stack?: string[];
   source: "website" | "google_maps" | "directory" | "hackernews" | "reddit" | "indiehackers" | "producthunt";
   source_url: string;
+  email_source_url?: string;
+  email_confidence?: number;
   source_external_id?: string;
   job_id?: string;
   user_id?: string;
@@ -28,8 +30,32 @@ export interface Lead {
   intent_score?: number;
   intent_reason?: string;
   raw_metadata?: Record<string, unknown>;
+  delivery_ubereats_status?: DeliveryPlatformStatus;
+  delivery_ubereats_menu_url?: string;
+  delivery_ubereats_confidence?: number;
+  delivery_doordash_status?: DeliveryPlatformStatus;
+  delivery_doordash_menu_url?: string;
+  delivery_doordash_confidence?: number;
+  delivery_grubhub_status?: DeliveryPlatformStatus;
+  delivery_grubhub_menu_url?: string;
+  delivery_grubhub_confidence?: number;
+  delivery_deliveroo_status?: DeliveryPlatformStatus;
+  delivery_deliveroo_menu_url?: string;
+  delivery_deliveroo_confidence?: number;
+  delivery_justeat_status?: DeliveryPlatformStatus;
+  delivery_justeat_menu_url?: string;
+  delivery_justeat_confidence?: number;
+  restaurant_enrichment_status?: RestaurantEnrichmentStatus;
+  restaurant_enriched_at?: string;
   scraped_at?: string;
+  scrape_status?: "new" | "already_saved" | "updated" | "skipped_duplicate";
 }
+
+export type DeliveryPlatformStatus = "not_checked" | "found" | "not_found" | "unclear" | "error";
+
+export type DeliveryPlatformId = "ubereats" | "doordash" | "grubhub" | "deliveroo" | "justeat";
+
+export type RestaurantEnrichmentStatus = "not_checked" | "completed" | "partial" | "error";
 
 export interface ScrapeJob {
   id: string;

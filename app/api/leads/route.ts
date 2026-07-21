@@ -5,7 +5,9 @@ import { getSupabaseServiceClient } from "@/lib/db";
 import type { Lead } from "@/lib/types";
 
 export const runtime = "nodejs";
-const ALLOWED_SOURCES = new Set<Lead["source"]>([
+type SourceFilter = Lead["source"] | "communities";
+
+const ALLOWED_SOURCES = new Set<SourceFilter>([
   "website",
   "google_maps",
   "directory",
@@ -13,6 +15,21 @@ const ALLOWED_SOURCES = new Set<Lead["source"]>([
   "reddit",
   "indiehackers",
   "producthunt",
+  "communities",
+]);
+const ALLOWED_WEBSITE_FILTERS = new Set(["all", "has_website", "no_website"]);
+const ALLOWED_RESTAURANT_ENRICHMENT_FILTERS = new Set([
+  "all",
+  "has_public_email",
+  "no_public_email",
+  "ubereats_found",
+  "doordash_found",
+  "any_delivery_found",
+  "ubereats_or_doordash_found",
+  "not_checked",
+  "grubhub_found",
+  "deliveroo_found",
+  "justeat_found",
 ]);
 
 function numberParam(value: string | null, fallback: number) {
@@ -27,6 +44,8 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(numberParam(searchParams.get("limit"), 50), 500);
     const offset = numberParam(searchParams.get("offset"), 0);
     const source = searchParams.get("source");
+    const websiteFilter = searchParams.get("website_status") ?? "all";
+    const restaurantEnrichmentFilter = searchParams.get("restaurant_enrichment") ?? "all";
     const jobId = searchParams.get("job_id");
     const supabase = getSupabaseServiceClient();
 
@@ -38,11 +57,53 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (source) {
-      if (!ALLOWED_SOURCES.has(source as Lead["source"])) {
+      if (!ALLOWED_SOURCES.has(source as SourceFilter)) {
         return NextResponse.json({ error: "Invalid lead source." }, { status: 400 });
       }
 
-      query = query.eq("source", source);
+      if (source === "communities") {
+        query = query.in("source", ["hackernews", "reddit", "indiehackers", "producthunt"]);
+      } else {
+        query = query.eq("source", source);
+      }
+    }
+
+    if (!ALLOWED_WEBSITE_FILTERS.has(websiteFilter)) {
+      return NextResponse.json({ error: "Invalid website status filter." }, { status: 400 });
+    }
+
+    if (websiteFilter === "has_website") {
+      query = query.not("website", "is", null).neq("website", "");
+    } else if (websiteFilter === "no_website") {
+      query = query.or("website.is.null,website.eq.");
+    }
+
+    if (!ALLOWED_RESTAURANT_ENRICHMENT_FILTERS.has(restaurantEnrichmentFilter)) {
+      return NextResponse.json({ error: "Invalid restaurant enrichment filter." }, { status: 400 });
+    }
+
+    if (restaurantEnrichmentFilter === "has_public_email") {
+      query = query.not("email", "is", null).neq("email", "");
+    } else if (restaurantEnrichmentFilter === "no_public_email") {
+      query = query.or("email.is.null,email.eq.");
+    } else if (restaurantEnrichmentFilter === "ubereats_found") {
+      query = query.eq("delivery_ubereats_status", "found");
+    } else if (restaurantEnrichmentFilter === "doordash_found") {
+      query = query.eq("delivery_doordash_status", "found");
+    } else if (restaurantEnrichmentFilter === "grubhub_found") {
+      query = query.eq("delivery_grubhub_status", "found");
+    } else if (restaurantEnrichmentFilter === "deliveroo_found") {
+      query = query.eq("delivery_deliveroo_status", "found");
+    } else if (restaurantEnrichmentFilter === "justeat_found") {
+      query = query.eq("delivery_justeat_status", "found");
+    } else if (restaurantEnrichmentFilter === "any_delivery_found") {
+      query = query.or(
+        "delivery_ubereats_status.eq.found,delivery_doordash_status.eq.found,delivery_grubhub_status.eq.found,delivery_deliveroo_status.eq.found,delivery_justeat_status.eq.found",
+      );
+    } else if (restaurantEnrichmentFilter === "ubereats_or_doordash_found") {
+      query = query.or("delivery_ubereats_status.eq.found,delivery_doordash_status.eq.found");
+    } else if (restaurantEnrichmentFilter === "not_checked") {
+      query = query.or("restaurant_enrichment_status.is.null,restaurant_enrichment_status.eq.not_checked");
     }
 
     if (jobId) {

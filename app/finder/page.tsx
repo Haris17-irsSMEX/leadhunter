@@ -4,12 +4,24 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload } from "lucide-react";
 import JobStatusCard from "@/components/JobStatusCard";
+import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
+import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { getLeadBadge } from "@/lib/leadScoring";
-import type { Lead } from "@/lib/types";
+import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 type FinderTab = "website-batch" | "google-maps" | "directories" | "communities";
 type WebsiteMode = "single" | "bulk";
+type WebsiteFilter = "all" | "has_website" | "no_website";
+type DeliveryPreset = "usa" | "uk" | "custom";
+type DeliveryFilter =
+  | "all"
+  | "any_selected_found"
+  | "ubereats_found"
+  | "doordash_found"
+  | "grubhub_found"
+  | "deliveroo_found"
+  | "justeat_found";
 type CommunitySource = "hackernews" | "reddit" | "indiehackers" | "producthunt";
 type HackerNewsMode = "show_hn" | "ask_hn" | "jobs" | "who_is_hiring";
 type RedditMode = "subreddit" | "search";
@@ -24,8 +36,12 @@ type BatchResult = {
 };
 
 type MapsResult = {
+  requested?: number;
   count: number;
+  inserted: number;
+  skippedDuplicates: number;
   leads: Lead[];
+  warnings?: string[];
 };
 
 type DirectoryResult = {
@@ -69,6 +85,18 @@ const productHuntModeOptions: Array<{ label: string; value: ProductHuntMode }> =
   { label: "Front Page", value: "front_page" },
 ];
 
+const deliveryPlatforms: Array<{ label: string; value: DeliveryPlatformId }> = [
+  { label: "Uber Eats", value: "ubereats" },
+  { label: "DoorDash", value: "doordash" },
+  { label: "Grubhub", value: "grubhub" },
+  { label: "Deliveroo", value: "deliveroo" },
+  { label: "Just Eat", value: "justeat" },
+];
+
+const usaDeliveryPlatforms: DeliveryPlatformId[] = ["ubereats", "doordash", "grubhub"];
+const ukDeliveryPlatforms: DeliveryPlatformId[] = ["ubereats", "deliveroo", "justeat"];
+const defaultDeliveryPlatforms: DeliveryPlatformId[] = ["ubereats", "doordash"];
+
 function resultBadge(lead: Lead) {
   const badge = getLeadBadge(lead);
 
@@ -77,6 +105,128 @@ function resultBadge(lead: Lead) {
       {badge.label} {badge.score}
     </span>
   );
+}
+
+function scrapeStatusBadge(status?: Lead["scrape_status"]) {
+  const normalized = status ?? "new";
+  const config =
+    normalized === "new"
+      ? { label: "New", className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" }
+      : normalized === "updated"
+        ? { label: "Updated", className: "border-sky-400/30 bg-sky-400/10 text-sky-200" }
+        : normalized === "skipped_duplicate"
+          ? { label: "Skipped duplicate", className: "border-amber-400/30 bg-amber-400/10 text-amber-200" }
+          : { label: "Already saved", className: "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]" };
+
+  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${config.className}`}>{config.label}</span>;
+}
+
+function statusBadge(label: string, status?: string) {
+  const normalized = status ?? "not_checked";
+  const className =
+    normalized === "found" || normalized === "completed"
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      : normalized === "unclear" || normalized === "partial"
+        ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+        : normalized === "error"
+          ? "border-rose-400/30 bg-rose-400/10 text-rose-200"
+          : normalized === "not_found"
+            ? "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]"
+            : "border-white/10 bg-white/[0.03] text-[var(--text-muted)]";
+
+  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>{label}</span>;
+}
+
+function restaurantEmailStatus(lead: Lead) {
+  const enrichment = lead.raw_metadata?.restaurant_enrichment;
+  const emailStatus =
+    enrichment && typeof enrichment === "object" && "email_status" in enrichment && typeof enrichment.email_status === "string"
+      ? enrichment.email_status
+      : undefined;
+
+  if (cleanSafePublicEmail(lead.email)) {
+    return statusBadge("Email found", "found");
+  }
+
+  if (emailStatus === "error") {
+    return statusBadge("Error", "error");
+  }
+
+  if (emailStatus === "not_found") {
+    return statusBadge("No public email", "not_found");
+  }
+
+  return statusBadge("Not checked", "not_checked");
+}
+
+function deliveryPlatformLabel(platform: DeliveryPlatformId) {
+  return deliveryPlatforms.find((item) => item.value === platform)?.label ?? platform;
+}
+
+function deliveryPlatformStatus(lead: Lead, platform: DeliveryPlatformId) {
+  if (platform === "ubereats") {
+    return lead.delivery_ubereats_status;
+  }
+  if (platform === "doordash") {
+    return lead.delivery_doordash_status;
+  }
+  if (platform === "grubhub") {
+    return lead.delivery_grubhub_status;
+  }
+  if (platform === "deliveroo") {
+    return lead.delivery_deliveroo_status;
+  }
+
+  return lead.delivery_justeat_status;
+}
+
+function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
+  if (platform === "ubereats") {
+    return lead.delivery_ubereats_menu_url;
+  }
+  if (platform === "doordash") {
+    return lead.delivery_doordash_menu_url;
+  }
+  if (platform === "grubhub") {
+    return lead.delivery_grubhub_menu_url;
+  }
+  if (platform === "deliveroo") {
+    return lead.delivery_deliveroo_menu_url;
+  }
+
+  return lead.delivery_justeat_menu_url;
+}
+
+function DeliveryPlatformCell({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
+  const status = deliveryPlatformStatus(lead, platform);
+  const menuUrl = deliveryPlatformMenuUrl(lead, platform);
+  const label = deliveryPlatformLabel(platform);
+
+  return (
+    <div className="space-y-2">
+      {statusBadge(deliveryStatusLabelForLead(lead, platform), status)}
+      {status === "found" ? <p className="text-xs text-emerald-200">{label} presence found</p> : null}
+      {menuUrl ? (
+        <a href={menuUrl} target="_blank" rel="noreferrer" className="block text-xs text-[var(--accent)]">
+          Menu/listing URL
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
+function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
+  if (status === "completed") {
+    return "Completed";
+  }
+  if (status === "partial") {
+    return "Partial";
+  }
+  if (status === "error") {
+    return "Error";
+  }
+
+  return "Not checked";
 }
 
 function sourceLabel(source: Lead["source"]) {
@@ -176,6 +326,11 @@ export default function FinderPage() {
   const [mapsQuery, setMapsQuery] = useState("");
   const [mapsLocation, setMapsLocation] = useState("");
   const [mapsCount, setMapsCount] = useState(20);
+  const [mapsWebsiteFilter, setMapsWebsiteFilter] = useState<WebsiteFilter>("all");
+  const [mapsRestaurantEnrichment, setMapsRestaurantEnrichment] = useState(false);
+  const [mapsDeliveryPreset, setMapsDeliveryPreset] = useState<DeliveryPreset>("custom");
+  const [mapsDeliveryPlatforms, setMapsDeliveryPlatforms] = useState<DeliveryPlatformId[]>(defaultDeliveryPlatforms);
+  const [mapsDeliveryFilter, setMapsDeliveryFilter] = useState<DeliveryFilter>("all");
   const [mapsResult, setMapsResult] = useState<MapsResult | null>(null);
   const [directoryUrl, setDirectoryUrl] = useState("");
   const [directoryResult, setDirectoryResult] = useState<DirectoryResult | null>(null);
@@ -310,6 +465,47 @@ export default function FinderPage() {
     };
   }
 
+  function deliveryPresetForLocation(location: string): DeliveryPreset {
+    const normalized = location.trim().toLowerCase();
+
+    if (/\b(uk|united kingdom|london|manchester|birmingham|glasgow|england|scotland|wales)\b/.test(normalized)) {
+      return "uk";
+    }
+
+    if (/\b(usa|us|united states|new york|los angeles|chicago|houston|phoenix|philadelphia|san antonio|san diego|dallas|austin)\b/.test(normalized)) {
+      return "usa";
+    }
+
+    return "custom";
+  }
+
+  function applyDeliveryPreset(preset: DeliveryPreset) {
+    setMapsDeliveryPreset(preset);
+
+    if (preset === "usa") {
+      setMapsDeliveryPlatforms(usaDeliveryPlatforms);
+    } else if (preset === "uk") {
+      setMapsDeliveryPlatforms(ukDeliveryPlatforms);
+    } else {
+      setMapsDeliveryPlatforms(defaultDeliveryPlatforms);
+    }
+  }
+
+  function toggleRestaurantEnrichment(checked: boolean) {
+    setMapsRestaurantEnrichment(checked);
+
+    if (checked) {
+      applyDeliveryPreset(deliveryPresetForLocation(mapsLocation));
+    }
+  }
+
+  function toggleDeliveryPlatform(platform: DeliveryPlatformId, checked: boolean) {
+    setMapsDeliveryPreset("custom");
+    setMapsDeliveryPlatforms((current) =>
+      checked ? [...new Set([...current, platform])] : current.filter((item) => item !== platform),
+    );
+  }
+
   async function handleSingleScrape() {
     setSingleLoading(true);
     setSingleError("");
@@ -379,6 +575,10 @@ export default function FinderPage() {
           query: mapsQuery.trim(),
           location: mapsLocation.trim(),
           numResults: mapsCount,
+          websiteFilter: mapsWebsiteFilter,
+          restaurantEnrichment: mapsRestaurantEnrichment,
+          deliveryPlatforms: mapsDeliveryPlatforms,
+          deliveryFilter: mapsDeliveryFilter,
         }),
       });
       const data = (await response.json()) as MapsResult & { error?: string };
@@ -388,7 +588,7 @@ export default function FinderPage() {
       }
 
       setMapsResult(data);
-      showToast(`${data.count} Google Maps leads scraped.`, "success");
+      showToast(`Saved ${data.inserted ?? data.count} new Google Maps leads.`, "success");
     } catch (error) {
       console.error(error);
       showToast(error instanceof Error ? error.message : "Unable to search Google Maps.", "error");
@@ -657,7 +857,7 @@ export default function FinderPage() {
 
         {activeTab === "google-maps" ? (
           <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6">
-            <div className="grid gap-4 lg:grid-cols-[1.15fr_1fr_180px_auto] lg:items-end">
+            <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr_170px_190px_auto] lg:items-start">
               <div>
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">What type of business?</label>
                 <input
@@ -680,23 +880,116 @@ export default function FinderPage() {
                 <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">How many results</label>
                 <input
                   type="number"
-                  min={5}
+                  min={1}
                   max={50}
                   value={mapsCount}
-                  onChange={(event) => setMapsCount(Math.min(Math.max(Number(event.target.value) || 5, 5), 50))}
+                  onChange={(event) => setMapsCount(Math.min(Math.max(Number(event.target.value) || 1, 1), 50))}
                   className="app-input w-full"
                 />
+                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
+                  Google Maps can return up to 50 leads per search when enough results are available.
+                </p>
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Website filter</label>
+                <select
+                  value={mapsWebsiteFilter}
+                  onChange={(event) => setMapsWebsiteFilter(event.target.value as WebsiteFilter)}
+                  className="app-input h-11 w-full"
+                >
+                  <option value="all">All businesses</option>
+                  <option value="has_website">Has website</option>
+                  <option value="no_website">No website</option>
+                </select>
+                <p className="mt-2 text-xs leading-5 text-[var(--text-secondary)]">
+                  Use 'No website' to find local businesses that may need a new website.
+                </p>
               </div>
               <button
                 type="button"
                 disabled={mapsLoading || !mapsQuery.trim() || !mapsLocation.trim()}
                 onClick={handleMapsScrape}
-                className="btn-primary h-11 justify-center disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-primary h-11 justify-center disabled:cursor-not-allowed disabled:opacity-60 lg:mt-[29px]"
               >
                 {mapsLoading ? <MapPin className="h-4 w-4 animate-bounce" /> : <Search className="h-4 w-4" />}
                 Search & Scrape
               </button>
             </div>
+
+            <label className="mt-5 flex gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+              <input
+                type="checkbox"
+                checked={mapsRestaurantEnrichment}
+                onChange={(event) => toggleRestaurantEnrichment(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-[var(--text-primary)]">Restaurant enrichment</span>
+                <span className="mt-1 block text-xs leading-5 text-[var(--text-secondary)]">
+                  Find public emails from restaurant websites and check delivery-platform presence.
+                </span>
+              </span>
+            </label>
+
+            {mapsRestaurantEnrichment ? (
+              <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-[var(--text-primary)]">Delivery platforms</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
+                      Choose which delivery platforms to check using public search results.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {[
+                        { label: "USA platforms", value: "usa" as const },
+                        { label: "UK platforms", value: "uk" as const },
+                        { label: "Custom", value: "custom" as const },
+                      ].map((preset) => (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          onClick={() => applyDeliveryPreset(preset.value)}
+                          className={mapsDeliveryPreset === preset.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    {mapsDeliveryPreset === "custom" ? (
+                      <div className="mt-3 flex flex-wrap gap-3">
+                        {deliveryPlatforms.map((platform) => (
+                          <label key={platform.value} className="inline-flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+                            <input
+                              type="checkbox"
+                              checked={mapsDeliveryPlatforms.includes(platform.value)}
+                              onChange={(event) => toggleDeliveryPlatform(platform.value, event.target.checked)}
+                              className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+                            />
+                            {platform.label}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="w-full xl:max-w-xs">
+                    <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Delivery filter</label>
+                    <select
+                      value={mapsDeliveryFilter}
+                      onChange={(event) => setMapsDeliveryFilter(event.target.value as DeliveryFilter)}
+                      className="app-input h-11 w-full"
+                    >
+                      <option value="all">All enriched restaurants</option>
+                      <option value="any_selected_found">Any selected platform found</option>
+                      <option value="ubereats_found">Uber Eats found</option>
+                      <option value="doordash_found">DoorDash found</option>
+                      <option value="grubhub_found">Grubhub found</option>
+                      <option value="deliveroo_found">Deliveroo found</option>
+                      <option value="justeat_found">Just Eat found</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {mapsError ? <p className="mt-4 text-sm text-rose-400">{mapsError}</p> : null}
 
@@ -704,19 +997,40 @@ export default function FinderPage() {
               <div className="mt-6 space-y-4">
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="badge-hot">
-                    {mapsResult.count} leads scraped
+                    {`Requested ${mapsResult.requested ?? mapsCount}. Found ${mapsResult.count}. Saved ${mapsResult.inserted ?? mapsResult.count} new leads. ${mapsResult.skippedDuplicates ?? 0} were already in your workspace.`}
                   </span>
+                  {mapsResult.inserted === 0 && mapsResult.skippedDuplicates > 0 ? (
+                    <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-100">
+                      Repeated search: no duplicates created
+                    </span>
+                  ) : null}
                   <Link href="/leads" className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110">
                     {"View all in My Leads ->"}
                   </Link>
                 </div>
 
-                <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
+                {mapsResult.warnings?.length ? (
+                  <div className="rounded-[10px] border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                    {mapsResult.warnings.map((warning) => (
+                      <p key={warning}>{warning}</p>
+                    ))}
+                  </div>
+                ) : null}
+
+                {mapsResult.leads.length ? (
+                  <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
                   <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
+                    <table className="min-w-[1320px] text-left text-sm">
                       <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
                         <tr>
                           <th className="px-4 py-3 font-medium">Name</th>
+                          <th className="px-4 py-3 font-medium">Email</th>
+                          <th className="px-4 py-3 font-medium">Uber Eats</th>
+                          <th className="px-4 py-3 font-medium">DoorDash</th>
+                          <th className="px-4 py-3 font-medium">Grubhub</th>
+                          <th className="px-4 py-3 font-medium">Deliveroo</th>
+                          <th className="px-4 py-3 font-medium">Just Eat</th>
+                          <th className="px-4 py-3 font-medium">Enrichment</th>
                           <th className="px-4 py-3 font-medium">Location</th>
                           <th className="px-4 py-3 font-medium">Phone</th>
                           <th className="px-4 py-3 font-medium">Industry</th>
@@ -729,7 +1043,38 @@ export default function FinderPage() {
                               <div className="flex flex-wrap items-center gap-3">
                                 <span className="font-medium text-[var(--text-primary)]">{lead.company_name}</span>
                                 {resultBadge(lead)}
+                                {scrapeStatusBadge(lead.scrape_status)}
                               </div>
+                              <p className="mt-2 text-xs text-[var(--text-secondary)]">{lead.website?.trim() || "No website"}</p>
+                            </td>
+                            <td className="px-4 py-4">
+                              <div className="space-y-2">
+                                {restaurantEmailStatus(lead)}
+                                {cleanSafePublicEmail(lead.email) ? <p className="text-xs text-[var(--text-secondary)]">{cleanSafePublicEmail(lead.email)}</p> : null}
+                                {cleanSafePublicEmail(lead.email) && lead.email_source_url ? (
+                                  <a href={lead.email_source_url} target="_blank" rel="noreferrer" className="block text-xs text-[var(--accent)]">
+                                    Email source
+                                  </a>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-4 py-4">
+                              <DeliveryPlatformCell lead={lead} platform="ubereats" />
+                            </td>
+                            <td className="px-4 py-4">
+                              <DeliveryPlatformCell lead={lead} platform="doordash" />
+                            </td>
+                            <td className="px-4 py-4">
+                              <DeliveryPlatformCell lead={lead} platform="grubhub" />
+                            </td>
+                            <td className="px-4 py-4">
+                              <DeliveryPlatformCell lead={lead} platform="deliveroo" />
+                            </td>
+                            <td className="px-4 py-4">
+                              <DeliveryPlatformCell lead={lead} platform="justeat" />
+                            </td>
+                            <td className="px-4 py-4">
+                              {statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)}
                             </td>
                             <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.location ?? "—"}</td>
                             <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.phone ?? "—"}</td>
@@ -739,7 +1084,16 @@ export default function FinderPage() {
                       </tbody>
                     </table>
                   </div>
-                </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-6 text-sm text-[var(--text-secondary)]">
+                    {mapsDeliveryFilter !== "all"
+                      ? "No restaurants matched the selected delivery-platform filter. Try another city, niche, or platform."
+                      : mapsWebsiteFilter === "no_website"
+                      ? "No no-website businesses found in this search. Try another niche, city, or All businesses."
+                      : "No Google Maps businesses found in this search. Try another niche, city, or website filter."}
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
@@ -990,6 +1344,7 @@ export default function FinderPage() {
                         <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
                           <tr>
                             <th className="px-4 py-3 font-medium">Name</th>
+                            <th className="px-4 py-3 font-medium">Status</th>
                             <th className="px-4 py-3 font-medium">Source</th>
                             <th className="px-4 py-3 font-medium">Signal</th>
                             <th className="px-4 py-3 font-medium">Intent Score</th>
@@ -1002,6 +1357,7 @@ export default function FinderPage() {
                           {communityResult.leads.map((lead, index) => (
                             <tr key={`${lead.source}-${lead.source_external_id ?? lead.source_url ?? index}`}>
                               <td className="px-4 py-4 font-medium text-[var(--text-primary)]">{lead.company_name}</td>
+                              <td className="px-4 py-4">{scrapeStatusBadge(lead.scrape_status)}</td>
                               <td className="whitespace-nowrap px-4 py-4">
                                 <span
                                   className={`inline-flex whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium ${communitySourceBadgeClass(lead.source)}`}

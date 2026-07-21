@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
+import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
+import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import type { Lead } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -14,11 +17,29 @@ type ExportColumn = {
 const EXPORT_COLUMNS: ExportColumn[] = [
   { label: "Company Name", value: (lead) => cleanText(lead.company_name) },
   { label: "Website", value: (lead) => cleanText(lead.website) },
-  { label: "Email", value: (lead) => cleanText(lead.email) },
+  { label: "Email", value: (lead) => cleanSafePublicEmail(lead.email) },
+  { label: "Email Source", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : "") },
+  { label: "Email Confidence", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "") },
   { label: "Phone", value: (lead) => cleanText(lead.phone) },
   { label: "Location", value: (lead) => cleanText(lead.location) },
   { label: "Country", value: (lead) => cleanText(lead.country) },
   { label: "Industry", value: (lead) => cleanText(lead.industry) },
+  { label: "Uber Eats", value: (lead) => deliveryStatusLabelForLead(lead, "ubereats") },
+  { label: "Uber Eats Menu URL", value: (lead) => cleanText(lead.delivery_ubereats_menu_url) },
+  { label: "Uber Eats Confidence", value: (lead) => cleanNumber(lead.delivery_ubereats_confidence) },
+  { label: "DoorDash", value: (lead) => deliveryStatusLabelForLead(lead, "doordash") },
+  { label: "DoorDash Menu URL", value: (lead) => cleanText(lead.delivery_doordash_menu_url) },
+  { label: "DoorDash Confidence", value: (lead) => cleanNumber(lead.delivery_doordash_confidence) },
+  { label: "Grubhub", value: (lead) => deliveryStatusLabelForLead(lead, "grubhub") },
+  { label: "Grubhub Menu URL", value: (lead) => cleanText(lead.delivery_grubhub_menu_url) },
+  { label: "Grubhub Confidence", value: (lead) => cleanNumber(lead.delivery_grubhub_confidence) },
+  { label: "Deliveroo", value: (lead) => deliveryStatusLabelForLead(lead, "deliveroo") },
+  { label: "Deliveroo Menu URL", value: (lead) => cleanText(lead.delivery_deliveroo_menu_url) },
+  { label: "Deliveroo Confidence", value: (lead) => cleanNumber(lead.delivery_deliveroo_confidence) },
+  { label: "Just Eat", value: (lead) => deliveryStatusLabelForLead(lead, "justeat") },
+  { label: "Just Eat Menu URL", value: (lead) => cleanText(lead.delivery_justeat_menu_url) },
+  { label: "Just Eat Confidence", value: (lead) => cleanNumber(lead.delivery_justeat_confidence) },
+  { label: "Restaurant Enrichment", value: (lead) => restaurantEnrichmentLabel(lead.restaurant_enrichment_status) },
   { label: "Description", value: (lead) => cleanText(lead.description) },
   { label: "Founder Name", value: (lead) => cleanText(lead.founder_name) },
   { label: "LinkedIn", value: (lead) => cleanText(lead.linkedin_url) },
@@ -37,6 +58,21 @@ function cleanText(value: string | string[] | null | undefined) {
   }
 
   return value?.trim() ?? "";
+}
+
+function cleanNumber(value: number | null | undefined) {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+function restaurantEnrichmentLabel(value: Lead["restaurant_enrichment_status"]) {
+  const labels = {
+    completed: "Completed",
+    partial: "Partial",
+    error: "Error",
+    not_checked: "Not checked",
+  };
+
+  return value ? labels[value] : "";
 }
 
 function sourceLabel(source: Lead["source"]) {
@@ -96,6 +132,7 @@ export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
     const jobId = request.nextUrl.searchParams.get("job_id");
+    const exportFilter = normalizeLeadExportFilter(request.nextUrl.searchParams.get("export_filter"));
     const ids = request.nextUrl.searchParams
       .get("ids")
       ?.split(",")
@@ -122,7 +159,12 @@ export async function GET(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    const leads = (data ?? []) as Lead[];
+    const leads = applyLeadExportFilter((data ?? []) as Lead[], exportFilter);
+
+    if (!leads.length && exportFilter !== "all") {
+      return NextResponse.json({ error: "No leads match this export filter." }, { status: 404 });
+    }
+
     const csvHeaders = EXPORT_COLUMNS.map((column) => column.label).map(csvEscape).join(",");
     const csv = `\uFEFF${[csvHeaders, ...leads.map(leadToCsvRow)].join("\r\n")}`;
 

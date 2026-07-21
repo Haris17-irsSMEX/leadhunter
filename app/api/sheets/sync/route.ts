@@ -3,6 +3,7 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
+import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import type { Lead } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -27,8 +28,10 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       spreadsheetId?: string;
       sheetName?: string;
+      syncFilter?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
+    const syncFilter = normalizeLeadExportFilter(body.syncFilter);
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -49,11 +52,13 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    const result = await syncLeadsToSheet(
-      spreadsheetId,
-      (data ?? []) as Lead[],
-      (body.sheetName?.trim() || "Leads").slice(0, 100),
-    );
+    const leads = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
+
+    if (!leads.length && syncFilter !== "all") {
+      return NextResponse.json({ error: "No leads match this sync filter." }, { status: 404 });
+    }
+
+    const result = await syncLeadsToSheet(spreadsheetId, leads, (body.sheetName?.trim() || "Leads").slice(0, 100));
 
     return NextResponse.json(result);
   } catch (error) {

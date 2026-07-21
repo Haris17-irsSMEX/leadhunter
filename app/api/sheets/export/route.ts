@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
+import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { exportLeadsToSheet, GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import type { Lead } from "@/lib/types";
 
@@ -30,9 +31,11 @@ export async function POST(request: NextRequest) {
       leadIds?: string[];
       count?: number;
       sheetName?: string;
+      syncFilter?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
     const mode = body.mode ?? (Array.isArray(body.leadIds) && body.leadIds.length > 0 ? "selected" : "recent");
+    const syncFilter = normalizeLeadExportFilter(body.syncFilter);
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -69,7 +72,12 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    const leads = (data ?? []) as Lead[];
+    const leads = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
+
+    if (!leads.length && syncFilter !== "all") {
+      return NextResponse.json({ error: "No leads match this sync filter." }, { status: 404 });
+    }
+
     const result =
       mode === "all"
         ? await syncLeadsToSheet(spreadsheetId, leads, sheetName)

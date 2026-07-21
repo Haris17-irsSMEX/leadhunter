@@ -47,7 +47,12 @@ const features = [
   {
     icon: MapPin,
     title: "Google Maps lead discovery",
-    copy: "Collect public business names, websites, phone numbers, addresses, categories, and source details by niche and location.",
+    copy: "Collect public business names, websites, phone numbers, addresses, categories, and source details by niche, location, and website status.",
+  },
+  {
+    icon: Globe2,
+    title: "Website-status targeting",
+    copy: "Filter Google Maps results by all businesses, businesses with websites, or businesses with no website listed.",
   },
   {
     icon: TableProperties,
@@ -74,14 +79,40 @@ const features = [
     title: "Optional email enrichment",
     copy: "Search public contact and about pages when a business website is available. Results are not guaranteed.",
   },
+  {
+    icon: MapPin,
+    title: "Restaurant campaign enrichment",
+    copy: "For restaurant campaigns, check public website emails where available and delivery-platform presence across major US and UK platforms.",
+  },
 ];
 
 const audiences = [
-  ["Marketing agencies", "Build targeted lists by niche and city for focused client campaigns."],
-  ["Web design and SEO freelancers", "Find businesses with a public website and a clear reason to start a conversation."],
+  ["Marketing agencies", "Build targeted lists by niche, city, source, and website status for focused client campaigns."],
+  ["Web developers", "Find businesses with no website listed and pitch website, SEO, or digital services."],
+  ["SEO agencies", "Identify local businesses by category and location before preparing audit or outreach workflows."],
+  ["Freelancers", "Create focused prospect lists without copying business details across browser tabs."],
   ["Lead generation teams", "Turn repetitive business research into an organized, export-ready workflow."],
   ["Appointment setters", "Keep fresh prospects in one place before moving them into an outreach process."],
-  ["B2B sales teams", "Explore local businesses and startup signals without copying rows across browser tabs."],
+  ["Outbound sales teams", "Explore local businesses and startup signals before exporting clean outreach lists."],
+];
+
+const campaignCards = [
+  {
+    title: "Find businesses without websites.",
+    copy: "Filter Google Maps results to find local businesses with no website listed, then pitch website, SEO, or digital services.",
+  },
+  {
+    title: "Build outreach lists for any niche.",
+    copy: "Search by business type and location, save qualified leads, and export them to CSV, Excel, or Google Sheets.",
+  },
+  {
+    title: "Useful for restaurant and local-service campaigns.",
+    copy: "Find restaurants and local businesses by city, category, website status, phone number, and source.",
+  },
+  {
+    title: "Restaurant campaign enrichment.",
+    copy: "Scrape restaurants from Google Maps, find public website emails where available, and check public delivery-platform presence across Uber Eats, DoorDash, Grubhub, Deliveroo, and Just Eat.",
+  },
 ];
 
 const pricing = [
@@ -187,7 +218,7 @@ function ProductPreview() {
           </span>
         </div>
 
-        <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[0.8fr_0.8fr_0.4fr_auto] lg:items-end">
+        <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[0.8fr_0.8fr_0.4fr_0.5fr_auto] lg:items-end">
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Business type</span>
             <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
@@ -204,6 +235,12 @@ function ProductPreview() {
             <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Results</span>
             <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
               20
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Website filter</span>
+            <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
+              No website
             </span>
           </label>
           <span className="flex h-12 items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 text-sm font-semibold text-white">
@@ -415,7 +452,7 @@ export default function HomePage() {
               Find restaurants, clinics, law firms, agencies, SaaS companies, or other target businesses by niche and location.
             </p>
           </div>
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {audiences.map(([title, copy]) => (
               <article key={title} className="rounded-[20px] border border-white/[0.08] bg-[#111522] p-5">
                 <Building2 className="h-5 w-5 text-violet-300" />
@@ -424,6 +461,18 @@ export default function HomePage() {
               </article>
             ))}
           </div>
+          <div className="mt-8 grid gap-5 lg:grid-cols-3">
+            {campaignCards.map((card) => (
+              <article key={card.title} className="rounded-[22px] border border-white/[0.08] bg-[#0d101a] p-6">
+                <h3 className="text-lg font-semibold">{card.title}</h3>
+                <p className="mt-3 text-sm leading-7 text-slate-400">{card.copy}</p>
+              </article>
+            ))}
+          </div>
+          <p className="mt-8 max-w-3xl text-sm leading-7 text-slate-500">
+            Delivery-platform presence is based on public search signals and confidence scoring. It is not official verification.
+            Ratings and deeper delivery insights may be added later through compliant data sources or official integrations.
+          </p>
         </div>
       </section>
 

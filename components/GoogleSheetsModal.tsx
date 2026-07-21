@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, FileSpreadsheet, Info, Loader2, X } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
+import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { useToast } from "@/lib/useToast";
 
 type SheetMode = "selected" | "recent" | "all";
@@ -14,6 +15,7 @@ type Props = {
   onClose: () => void;
   selectedIds?: string[];
   totalLeads: number;
+  defaultSyncFilter?: LeadExportFilter;
   onActionComplete?: () => void;
 };
 
@@ -28,11 +30,24 @@ async function parseResponseSafely(response: Response) {
   return { error: text.slice(0, 200) };
 }
 
-export default function GoogleSheetsModal({ open, onClose, selectedIds = [], totalLeads, onActionComplete }: Props) {
+const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
+  { label: "All visible leads", value: "all" },
+  { label: "Has public email", value: "has_public_email" },
+  { label: "Any delivery platform found", value: "any_delivery_found" },
+  { label: "Uber Eats found", value: "ubereats_found" },
+  { label: "DoorDash found", value: "doordash_found" },
+  { label: "Grubhub found", value: "grubhub_found" },
+  { label: "Deliveroo found", value: "deliveroo_found" },
+  { label: "Just Eat found", value: "justeat_found" },
+  { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
+];
+
+export default function GoogleSheetsModal({ open, onClose, selectedIds = [], totalLeads, defaultSyncFilter = "all", onActionComplete }: Props) {
   const { showToast } = useToast();
   const [spreadsheetId, setSpreadsheetId] = useState("");
   const [sheetName, setSheetName] = useState("Leads");
   const [mode, setMode] = useState<SheetMode>(selectedIds.length ? "selected" : "recent");
+  const [syncFilter, setSyncFilter] = useState<LeadExportFilter>(defaultSyncFilter);
   const [recentCount, setRecentCount] = useState(20);
   const [loadingMode, setLoadingMode] = useState<SheetMode | null>(null);
   const [error, setError] = useState("");
@@ -42,11 +57,12 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
   useEffect(() => {
     if (open) {
       setMode(selectedIds.length ? "selected" : "recent");
+      setSyncFilter(defaultSyncFilter);
       setError("");
       setSuccess(null);
       window.setTimeout(() => dialogRef.current?.focus(), 0);
     }
-  }, [open, selectedIds.length]);
+  }, [defaultSyncFilter, open, selectedIds.length]);
 
   useEffect(() => {
     if (!open) {
@@ -83,6 +99,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
       mode: targetMode,
       leadIds: targetMode === "selected" ? selectedIds : undefined,
       count: targetMode === "recent" ? Math.min(Math.max(recentCount, 1), 500) : undefined,
+      syncFilter,
     };
 
     try {
@@ -196,6 +213,20 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
             <input value={sheetName} onChange={(event) => setSheetName(event.target.value)} className="app-input mt-2 w-full" />
             <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
               The tab inside the spreadsheet where leads should be written, for example: Leads.
+            </span>
+          </label>
+
+          <label className="block">
+            <span className="app-label">Sync filter</span>
+            <select value={syncFilter} onChange={(event) => setSyncFilter(event.target.value as LeadExportFilter)} className="app-input mt-2 w-full">
+              {syncFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
+              Sync only the leads that match this filter.
             </span>
           </label>
 

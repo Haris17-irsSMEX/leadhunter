@@ -5,17 +5,41 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Sparkles, Trash2, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
-import type { Lead } from "@/lib/types";
+import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
+import { cleanSafePublicEmail } from "@/lib/email-safety";
+import type { LeadExportFilter } from "@/lib/lead-export-filters";
+import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
+
+const deliveryPlatforms: Array<{ label: string; value: DeliveryPlatformId }> = [
+  { label: "Uber Eats", value: "ubereats" },
+  { label: "DoorDash", value: "doordash" },
+  { label: "Grubhub", value: "grubhub" },
+  { label: "Deliveroo", value: "deliveroo" },
+  { label: "Just Eat", value: "justeat" },
+];
 
 type LeadsResponse = {
   leads: Lead[];
   total: number;
 };
 
-type SourceFilter = "all" | Lead["source"];
+type SourceFilter = "all" | Lead["source"] | "communities";
+type WebsiteStatusFilter = "all" | "has_website" | "no_website";
+type RestaurantEnrichmentFilter =
+  | "all"
+  | "has_public_email"
+  | "no_public_email"
+  | "ubereats_found"
+  | "doordash_found"
+  | "grubhub_found"
+  | "deliveroo_found"
+  | "justeat_found"
+  | "any_delivery_found"
+  | "ubereats_or_doordash_found"
+  | "not_checked";
 type SortOption = "newest" | "oldest" | "company";
 
 function toSourceFilter(value: string | null): SourceFilter {
@@ -26,7 +50,31 @@ function toSourceFilter(value: string | null): SourceFilter {
     value === "hackernews" ||
     value === "reddit" ||
     value === "indiehackers" ||
-    value === "producthunt"
+    value === "producthunt" ||
+    value === "communities"
+  ) {
+    return value;
+  }
+
+  return "all";
+}
+
+function toWebsiteStatusFilter(value: string | null): WebsiteStatusFilter {
+  return value === "has_website" || value === "no_website" ? value : "all";
+}
+
+function toRestaurantEnrichmentFilter(value: string | null): RestaurantEnrichmentFilter {
+  if (
+    value === "has_public_email" ||
+    value === "no_public_email" ||
+    value === "ubereats_found" ||
+    value === "doordash_found" ||
+    value === "grubhub_found" ||
+    value === "deliveroo_found" ||
+    value === "justeat_found" ||
+    value === "any_delivery_found" ||
+    value === "ubereats_or_doordash_found" ||
+    value === "not_checked"
   ) {
     return value;
   }
@@ -133,6 +181,83 @@ function emptyText(value?: string | string[]) {
   return value?.trim() ?? "";
 }
 
+function isCommunitySource(source: Lead["source"]) {
+  return source === "hackernews" || source === "reddit" || source === "indiehackers" || source === "producthunt";
+}
+
+function displayDomain(url?: string) {
+  const trimmed = url?.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    return new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`).hostname.replace(/^www\./i, "");
+  } catch {
+    return trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0] ?? trimmed;
+  }
+}
+
+function displayShortUrl(url?: string) {
+  const domain = displayDomain(url).toLowerCase();
+
+  if (!domain) {
+    return "";
+  }
+
+  if (domain.includes("ubereats.")) {
+    return "Uber Eats listing";
+  }
+  if (domain.includes("doordash.")) {
+    return "DoorDash listing";
+  }
+  if (domain.includes("grubhub.")) {
+    return "Grubhub listing";
+  }
+  if (domain.includes("deliveroo.")) {
+    return "Deliveroo listing";
+  }
+  if (domain.includes("just-eat.") || domain.includes("justeat.")) {
+    return "Just Eat listing";
+  }
+
+  return displayDomain(url);
+}
+
+function formatDate(value?: string) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function compactStatus(status?: string) {
+  if (status === "found") {
+    return "found";
+  }
+  if (status === "error") {
+    return "error";
+  }
+  if (status === "unclear" || status === "partial") {
+    return "unclear";
+  }
+  if (status === "completed") {
+    return "completed";
+  }
+  if (status === "not_found") {
+    return "not_found";
+  }
+
+  return "not_checked";
+}
+
 function industryPreview(industry?: string) {
   const tags = (industry ?? "")
     .split(",")
@@ -149,14 +274,20 @@ function industryPreview(industry?: string) {
   };
 }
 
-function buildExportUrl(ids: string[], format: "csv" | "xlsx") {
+function buildExportUrl(ids: string[], format: "csv" | "xlsx", exportFilter: LeadExportFilter) {
   const base = format === "xlsx" ? "/api/leads/export/xlsx" : "/api/leads/export";
+  const query = new URLSearchParams();
 
-  if (!ids.length) {
-    return base;
+  if (ids.length) {
+    query.set("ids", ids.join(","));
   }
 
-  return `${base}?ids=${encodeURIComponent(ids.join(","))}`;
+  if (exportFilter !== "all") {
+    query.set("export_filter", exportFilter);
+  }
+
+  const search = query.toString();
+  return search ? `${base}?${search}` : base;
 }
 
 function triggerBlobDownload(blob: Blob, filename: string) {
@@ -197,8 +328,237 @@ function DetailField({ label, value }: { label: string; value?: string | string[
   );
 }
 
+function statusBadge(label: string, status?: string) {
+  const normalized = status ?? "not_checked";
+  const className =
+    label === "Provider limit"
+      ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+      : normalized === "found" || normalized === "completed"
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      : normalized === "unclear" || normalized === "partial"
+        ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+        : normalized === "error"
+          ? "border-rose-400/30 bg-rose-400/10 text-rose-200"
+          : normalized === "not_found"
+            ? "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]"
+            : "border-white/10 bg-white/[0.03] text-[var(--text-muted)]";
+
+  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${className}`}>{label}</span>;
+}
+
+function scrapeStatusBadge(status?: Lead["scrape_status"]) {
+  if (!status) {
+    return null;
+  }
+
+  const labels: Record<NonNullable<Lead["scrape_status"]>, string> = {
+    new: "New",
+    updated: "Updated",
+    already_saved: "Already saved",
+    skipped_duplicate: "Skipped duplicate",
+  };
+
+  const badgeStatus = status === "new" ? "found" : status === "updated" ? "unclear" : "not_checked";
+  return statusBadge(labels[status], badgeStatus);
+}
+
+function InfoItem({ label, value }: { label: string; value?: string | string[] }) {
+  const display = emptyText(value);
+
+  if (!display) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+      <p className="app-label text-[10px]">{label}</p>
+      <p className="mt-1 break-words text-sm text-[var(--text-primary)]">{display}</p>
+    </div>
+  );
+}
+
+function SmartLink({ href, label, className = "" }: { href?: string; label: string; className?: string }) {
+  if (!href?.trim()) {
+    return null;
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-white/[0.06] ${className}`}
+    >
+      {label}
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
+  );
+}
+
+function PlatformSummaryBadges({ lead }: { lead: Lead }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {deliveryPlatforms.map((platform) => {
+        const status = deliveryPlatformStatus(lead, platform.value);
+        const label = deliveryStatusLabelForLead(lead, platform.value);
+        const prominent = status === "found";
+        return (
+          <span key={platform.value} className={prominent ? "" : "opacity-70"}>
+            {statusBadge(`${platform.label}: ${label}`, status)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
+  const status = deliveryPlatformStatus(lead, platform);
+  const confidence = deliveryPlatformConfidence(lead, platform);
+  const menuUrl = deliveryPlatformMenuUrl(lead, platform);
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-[var(--bg)] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-[var(--text-primary)]">{deliveryPlatformLabel(platform)}</p>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
+            {typeof confidence === "number" ? `${confidence}/100 confidence` : "No confidence score"}
+          </p>
+        </div>
+        {statusBadge(deliveryStatusLabelForLead(lead, platform), status)}
+      </div>
+      <div className="mt-4">
+        <SmartLink href={menuUrl} label={displayShortUrl(menuUrl) || "Open listing"} />
+      </div>
+    </div>
+  );
+}
+
+function IndustryTags({ industry }: { industry?: string }) {
+  const tags = (industry ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (!tags.length) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {tags.map((tag) => (
+        <span key={tag} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-[var(--text-secondary)]">
+          {tag}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function deliveryPlatformLabel(platform: DeliveryPlatformId) {
+  return deliveryPlatforms.find((item) => item.value === platform)?.label ?? platform;
+}
+
+function deliveryPlatformStatus(lead: Lead, platform: DeliveryPlatformId) {
+  if (platform === "ubereats") {
+    return lead.delivery_ubereats_status;
+  }
+  if (platform === "doordash") {
+    return lead.delivery_doordash_status;
+  }
+  if (platform === "grubhub") {
+    return lead.delivery_grubhub_status;
+  }
+  if (platform === "deliveroo") {
+    return lead.delivery_deliveroo_status;
+  }
+
+  return lead.delivery_justeat_status;
+}
+
+function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
+  if (platform === "ubereats") {
+    return lead.delivery_ubereats_menu_url;
+  }
+  if (platform === "doordash") {
+    return lead.delivery_doordash_menu_url;
+  }
+  if (platform === "grubhub") {
+    return lead.delivery_grubhub_menu_url;
+  }
+  if (platform === "deliveroo") {
+    return lead.delivery_deliveroo_menu_url;
+  }
+
+  return lead.delivery_justeat_menu_url;
+}
+
+function deliveryPlatformConfidence(lead: Lead, platform: DeliveryPlatformId) {
+  if (platform === "ubereats") {
+    return lead.delivery_ubereats_confidence;
+  }
+  if (platform === "doordash") {
+    return lead.delivery_doordash_confidence;
+  }
+  if (platform === "grubhub") {
+    return lead.delivery_grubhub_confidence;
+  }
+  if (platform === "deliveroo") {
+    return lead.delivery_deliveroo_confidence;
+  }
+
+  return lead.delivery_justeat_confidence;
+}
+
+function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
+  if (status === "completed") {
+    return "Completed";
+  }
+  if (status === "partial") {
+    return "Partial";
+  }
+  if (status === "error") {
+    return "Error";
+  }
+
+  return "Not checked";
+}
+
+function DeliveryBadges({ lead }: { lead: Lead }) {
+  const hasRestaurantSignals =
+    (lead.restaurant_enrichment_status && lead.restaurant_enrichment_status !== "not_checked") ||
+    deliveryPlatforms.some((platform) => {
+      const status = deliveryPlatformStatus(lead, platform.value);
+      return status && status !== "not_checked";
+    }) ||
+    lead.email_source_url ||
+    typeof lead.email_confidence === "number";
+
+  if (!hasRestaurantSignals) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {deliveryPlatforms
+        .filter((platform) => {
+          const status = deliveryPlatformStatus(lead, platform.value);
+          return status && status !== "not_checked";
+        })
+        .map((platform) => (
+          <span key={platform.value}>
+            {statusBadge(`${platform.label}: ${deliveryStatusLabelForLead(lead, platform.value)}`, deliveryPlatformStatus(lead, platform.value))}
+          </span>
+        ))}
+      {statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)}
+    </div>
+  );
+}
+
 function needsEmailEnrichment(lead: Lead) {
-  return Boolean(lead.id && lead.website?.trim() && !lead.email?.trim());
+  return Boolean(lead.id && lead.website?.trim() && !cleanSafePublicEmail(lead.email));
 }
 
 function LeadRow({
@@ -226,6 +586,7 @@ function LeadRow({
   const industry = industryPreview(lead.industry);
   const canFindEmail = needsEmailEnrichment(lead);
   const emailButtonLabel = "Find email";
+  const safeEmail = cleanSafePublicEmail(lead.email);
 
   return (
     <>
@@ -260,6 +621,7 @@ function LeadRow({
               </button>
             ) : null}
           </div>
+          <DeliveryBadges lead={lead} />
         </td>
         <td className="px-3 py-4">
           <div className="truncate text-sm text-[var(--text-secondary)]">{lead.location ?? "—"}</div>
@@ -316,8 +678,24 @@ function LeadRow({
               <DetailField label="Website" value={lead.website} />
               <DetailField label="Description" value={lead.description} />
               <DetailField label="Founder" value={lead.founder_name} />
-              <DetailField label="Email" value={lead.email} />
+              <DetailField label="Email" value={safeEmail} />
+              <DetailField label="Email Source" value={safeEmail ? lead.email_source_url : undefined} />
+              <DetailField label="Email Confidence" value={safeEmail && typeof lead.email_confidence === "number" ? String(lead.email_confidence) : undefined} />
               <DetailField label="Phone" value={lead.phone} />
+              {deliveryPlatforms.map((platform) => (
+                <DetailField key={`${platform.value}-status`} label={platform.label} value={deliveryStatusLabelForLead(lead, platform.value)} />
+              ))}
+              {deliveryPlatforms.map((platform) => (
+                <DetailField key={`${platform.value}-url`} label={`${platform.label} Menu URL`} value={deliveryPlatformMenuUrl(lead, platform.value)} />
+              ))}
+              {deliveryPlatforms.map((platform) => (
+                <DetailField
+                  key={`${platform.value}-confidence`}
+                  label={`${platform.label} Confidence`}
+                  value={typeof deliveryPlatformConfidence(lead, platform.value) === "number" ? String(deliveryPlatformConfidence(lead, platform.value)) : undefined}
+                />
+              ))}
+              <DetailField label="Restaurant Enrichment" value={enrichmentStatusLabel(lead.restaurant_enrichment_status)} />
               <DetailField label="LinkedIn" value={lead.linkedin_url} />
               <DetailField label="Twitter" value={lead.twitter_handle} />
               <DetailField label="Location" value={lead.location} />
@@ -327,7 +705,207 @@ function LeadRow({
               <DetailField label="Pricing" value={lead.pricing_model} />
               <DetailField label="Tech Stack" value={lead.tech_stack} />
               <DetailField label="Source URL" value={lead.source_url} />
-              <DetailField label="Lead ID" value={rowId} />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  );
+}
+
+function ProfessionalLeadRow({
+  lead,
+  isExpanded,
+  isSelected,
+  onToggleExpand,
+  onToggleSelect,
+  onCopyEmail,
+  onDelete,
+  onEnrichEmail,
+  isEnriching,
+}: {
+  lead: Lead;
+  isExpanded: boolean;
+  isSelected: boolean;
+  onToggleExpand: () => void;
+  onToggleSelect: (checked: boolean) => void;
+  onCopyEmail: () => void;
+  onDelete: () => void;
+  onEnrichEmail: () => void;
+  isEnriching: boolean;
+}) {
+  const industry = industryPreview(lead.industry);
+  const canFindEmail = needsEmailEnrichment(lead);
+  const safeEmail = cleanSafePublicEmail(lead.email);
+  const websiteLabel = displayDomain(lead.website) || "No website";
+  const hasNotes =
+    Boolean(lead.description?.trim()) ||
+    Boolean(lead.founder_name?.trim()) ||
+    Boolean(lead.linkedin_url?.trim()) ||
+    Boolean(lead.twitter_handle?.trim()) ||
+    Boolean(lead.employee_count?.trim()) ||
+    Boolean(lead.pricing_model?.trim()) ||
+    Boolean(lead.tech_stack?.length);
+
+  return (
+    <>
+      <tr className="cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-white/[0.025]" onClick={onToggleExpand}>
+        <td className="w-[40px] px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(event) => onToggleSelect(event.target.checked)}
+            className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+          />
+        </td>
+        <td className="px-4 py-5 align-top">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="max-w-[340px] truncate text-sm font-semibold text-white">{lead.company_name}</p>
+            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sourceBadgeClass(lead.source)}`}>
+              {sourceLabel(lead.source)}
+            </span>
+            {scrapeStatusBadge(lead.scrape_status)}
+          </div>
+          <p className={lead.website ? "mt-2 text-xs text-[var(--text-secondary)]" : "mt-2 text-xs text-[var(--text-muted)]"}>{websiteLabel}</p>
+          {industry.visible ? (
+            <p className="mt-2 max-w-[360px] truncate text-xs text-[var(--text-muted)]">
+              {industry.visible}
+              {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
+            </p>
+          ) : null}
+        </td>
+        <td className="px-4 py-5 align-top">
+          <div className="space-y-1 text-sm">
+            <p className="max-w-[260px] truncate text-[var(--text-secondary)]">{lead.location || "No location"}</p>
+            <p className="text-xs text-[var(--text-muted)]">{lead.phone || "No phone"}</p>
+          </div>
+        </td>
+        <td className="px-4 py-5 align-top">
+          <div className="space-y-2">
+            {safeEmail ? statusBadge("Email found", "found") : statusBadge("No public email", "not_found")}
+            {safeEmail ? <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{safeEmail}</p> : null}
+          </div>
+        </td>
+        <td className="px-4 py-5 align-top">
+          <PlatformSummaryBadges lead={lead} />
+        </td>
+        <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
+        <td className="px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
+          <div className="flex items-center justify-end gap-1">
+            <a
+              href={lead.website || "#"}
+              target="_blank"
+              rel="noreferrer"
+              className={`icon-button h-8 w-8 ${lead.website ? "" : "pointer-events-none opacity-40"}`}
+              aria-label={`Open ${lead.company_name} website`}
+              title={lead.website ? `Open ${websiteLabel}` : "No website"}
+            >
+              <ExternalLink className="h-4 w-4" />
+            </a>
+            <button type="button" onClick={onCopyEmail} className="icon-button h-8 w-8" aria-label={`Copy ${lead.company_name} email`}>
+              <Copy className="h-4 w-4" />
+            </button>
+            {canFindEmail ? (
+              <button
+                type="button"
+                disabled={isEnriching}
+                onClick={onEnrichEmail}
+                className="icon-button h-8 w-8 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label={`Find email for ${lead.company_name}`}
+                title="Search public contact and about pages when available."
+              >
+                {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              </button>
+            ) : null}
+            <button type="button" onClick={onDelete} className="icon-button h-8 w-8 text-red-400 hover:text-red-400" aria-label={`Delete ${lead.company_name}`}>
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </td>
+      </tr>
+      {isExpanded ? (
+        <tr className="border-b border-[var(--border)] bg-[rgba(255,255,255,0.018)]">
+          <td colSpan={7} className="px-4 py-5">
+            <div className="rounded-3xl border border-white/10 bg-[rgba(255,255,255,0.025)] p-5 shadow-2xl shadow-black/10">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-xl font-semibold text-white">{lead.company_name}</h3>
+                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
+                      {sourceLabel(lead.source)}
+                    </span>
+                    {statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)}
+                  </div>
+                  <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                    Scraped {formatDate(lead.scraped_at) || formatRelative(lead.scraped_at)}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <SmartLink href={lead.website} label={displayDomain(lead.website) || "Open website"} />
+                  <SmartLink href={lead.source_url?.startsWith("http") ? lead.source_url : undefined} label="Open source" />
+                </div>
+              </div>
+
+              <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+                <section className="rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                  <p className="app-label text-xs">Lead overview</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <InfoItem label="Location" value={lead.location} />
+                    <InfoItem label="Phone" value={lead.phone} />
+                    <InfoItem label="Website" value={displayDomain(lead.website)} />
+                    <InfoItem label="Scraped" value={formatDate(lead.scraped_at)} />
+                  </div>
+                  <div className="mt-4">
+                    <IndustryTags industry={lead.industry} />
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                  <p className="app-label text-xs">Contact</p>
+                  <div className="mt-4 space-y-3">
+                    {safeEmail ? (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {statusBadge("Email found", "found")}
+                          <span className="text-sm text-white">{safeEmail}</span>
+                        </div>
+                        {typeof lead.email_confidence === "number" ? (
+                          <p className="text-sm text-[var(--text-secondary)]">{lead.email_confidence}/100 confidence</p>
+                        ) : null}
+                        <SmartLink href={lead.email_source_url} label="Open source" />
+                      </>
+                    ) : (
+                      <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3 text-sm text-[var(--text-secondary)]">
+                        No public email found.
+                      </div>
+                    )}
+                  </div>
+                </section>
+              </div>
+
+              <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                <p className="app-label text-xs">Delivery presence</p>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  {deliveryPlatforms.map((platform) => (
+                    <DeliveryPresenceCard key={platform.value} lead={lead} platform={platform.value} />
+                  ))}
+                </div>
+              </section>
+
+              {hasNotes ? (
+                <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                  <p className="app-label text-xs">Notes and metadata</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <InfoItem label="Description" value={lead.description} />
+                    <InfoItem label="Founder name" value={lead.founder_name} />
+                    <InfoItem label="LinkedIn" value={displayShortUrl(lead.linkedin_url)} />
+                    <InfoItem label="Twitter" value={lead.twitter_handle} />
+                    <InfoItem label="Employee count" value={lead.employee_count} />
+                    <InfoItem label="Pricing" value={lead.pricing_model} />
+                    <InfoItem label="Tech stack" value={lead.tech_stack} />
+                  </div>
+                </section>
+              ) : null}
             </div>
           </td>
         </tr>
@@ -340,11 +918,15 @@ export default function LeadsTable() {
   const searchParams = useSearchParams();
   const { showToast } = useToast();
   const sourceParamFilter = toSourceFilter(searchParams.get("source"));
+  const websiteParamFilter = toWebsiteStatusFilter(searchParams.get("website_status"));
+  const restaurantEnrichmentParamFilter = toRestaurantEnrichmentFilter(searchParams.get("restaurant_enrichment"));
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>(sourceParamFilter);
+  const [websiteStatusFilter, setWebsiteStatusFilter] = useState<WebsiteStatusFilter>(websiteParamFilter);
+  const [restaurantEnrichmentFilter, setRestaurantEnrichmentFilter] = useState<RestaurantEnrichmentFilter>(restaurantEnrichmentParamFilter);
   const [sort, setSort] = useState<SortOption>("newest");
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -353,6 +935,7 @@ export default function LeadsTable() {
   const [copyMessage, setCopyMessage] = useState("");
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const [bulkEnrichProgress, setBulkEnrichProgress] = useState<{ current: number; total: number } | null>(null);
@@ -391,6 +974,14 @@ export default function LeadsTable() {
         query.set("source", sourceFilter);
       }
 
+      if (websiteStatusFilter !== "all") {
+        query.set("website_status", websiteStatusFilter);
+      }
+
+      if (restaurantEnrichmentFilter !== "all") {
+        query.set("restaurant_enrichment", restaurantEnrichmentFilter);
+      }
+
       const response = await fetch(`/api/leads?${query.toString()}`, { cache: "no-store" });
       const payload = (await parseResponseSafely(response)) as LeadsResponse & { error?: string };
 
@@ -415,11 +1006,19 @@ export default function LeadsTable() {
 
   useEffect(() => {
     void fetchLeads(1);
-  }, [jobIdFilter, sourceFilter]);
+  }, [jobIdFilter, sourceFilter, websiteStatusFilter, restaurantEnrichmentFilter]);
 
   useEffect(() => {
     setSourceFilter(sourceParamFilter);
   }, [sourceParamFilter]);
+
+  useEffect(() => {
+    setWebsiteStatusFilter(websiteParamFilter);
+  }, [websiteParamFilter]);
+
+  useEffect(() => {
+    setRestaurantEnrichmentFilter(restaurantEnrichmentParamFilter);
+  }, [restaurantEnrichmentParamFilter]);
 
   useEffect(() => {
     if (!copyMessage) {
@@ -436,9 +1035,9 @@ export default function LeadsTable() {
       const searchMatch =
         !query ||
         normalizeText(lead.company_name).includes(query) ||
-        normalizeText(lead.email).includes(query) ||
+        normalizeText(cleanSafePublicEmail(lead.email)).includes(query) ||
         normalizeText(lead.location).includes(query);
-      const sourceMatch = sourceFilter === "all" || lead.source === sourceFilter;
+      const sourceMatch = sourceFilter === "all" || lead.source === sourceFilter || (sourceFilter === "communities" && isCommunitySource(lead.source));
 
       return searchMatch && sourceMatch;
     });
@@ -462,6 +1061,14 @@ export default function LeadsTable() {
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
   const selectedEnrichableLeads = leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && needsEmailEnrichment(lead));
+  const filtersActive = sourceFilter !== "all" || websiteStatusFilter !== "all" || restaurantEnrichmentFilter !== "all" || Boolean(search.trim());
+
+  function clearFilters() {
+    setSearch("");
+    setSourceFilter("all");
+    setWebsiteStatusFilter("all");
+    setRestaurantEnrichmentFilter("all");
+  }
 
   function removeDeleted(ids: string[]) {
     const remaining = leads.filter((lead) => !ids.includes(lead.id ?? ""));
@@ -563,13 +1170,15 @@ export default function LeadsTable() {
   }
 
   async function handleCopyEmail(email?: string) {
-    if (!email) {
+    const safeEmail = cleanSafePublicEmail(email);
+
+    if (!safeEmail) {
       setCopyMessage("This lead does not have an email.");
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(email);
+      await navigator.clipboard.writeText(safeEmail);
       setCopyMessage(`Copied ${email}`);
       showToast("Email copied to clipboard.", "success");
     } catch {
@@ -660,7 +1269,7 @@ export default function LeadsTable() {
     setExporting(true);
 
     try {
-      const response = await fetch(buildExportUrl(ids, format), { cache: "no-store" });
+      const response = await fetch(buildExportUrl(ids, format, exportFilter), { cache: "no-store" });
 
       if (!response.ok) {
         const payload = await parseResponseSafely(response);
@@ -680,25 +1289,47 @@ export default function LeadsTable() {
     }
   }
 
-  const sourcePillRows: Array<Array<{ label: string; value: SourceFilter }>> = [
-    [
-      { label: "All", value: "all" },
-      { label: "Websites", value: "website" },
-      { label: "Google Maps", value: "google_maps" },
-      { label: "Directories", value: "directory" },
-    ],
-    [
-      { label: "Hacker News", value: "hackernews" },
-      { label: "Reddit", value: "reddit" },
-      { label: "Indie Hackers", value: "indiehackers" },
-      { label: "Product Hunt", value: "producthunt" },
-    ],
+  const sourcePills: Array<{ label: string; value: SourceFilter }> = [
+    { label: "All", value: "all" },
+    { label: "Google Maps", value: "google_maps" },
+    { label: "Websites", value: "website" },
+    { label: "Directories", value: "directory" },
+    { label: "Communities", value: "communities" },
+  ];
+  const websiteStatusPills: Array<{ label: string; value: WebsiteStatusFilter }> = [
+    { label: "All", value: "all" },
+    { label: "Has website", value: "has_website" },
+    { label: "No website", value: "no_website" },
+  ];
+  const restaurantEnrichmentPills: Array<{ label: string; value: RestaurantEnrichmentFilter }> = [
+    { label: "All", value: "all" },
+    { label: "Has public email", value: "has_public_email" },
+    { label: "No public email", value: "no_public_email" },
+    { label: "Uber Eats", value: "ubereats_found" },
+    { label: "DoorDash", value: "doordash_found" },
+    { label: "Grubhub", value: "grubhub_found" },
+    { label: "Deliveroo", value: "deliveroo_found" },
+    { label: "Just Eat", value: "justeat_found" },
+    { label: "Any delivery found", value: "any_delivery_found" },
+    { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
+    { label: "Not checked", value: "not_checked" },
+  ];
+  const exportFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
+    { label: "All leads", value: "all" },
+    { label: "Has public email", value: "has_public_email" },
+    { label: "Any delivery platform found", value: "any_delivery_found" },
+    { label: "Uber Eats found", value: "ubereats_found" },
+    { label: "DoorDash found", value: "doordash_found" },
+    { label: "Grubhub found", value: "grubhub_found" },
+    { label: "Deliveroo found", value: "deliveroo_found" },
+    { label: "Just Eat found", value: "justeat_found" },
+    { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
   ];
 
   return (
     <div className="space-y-5">
       <section className="app-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="app-page-title">My Leads</h1>
@@ -706,18 +1337,28 @@ export default function LeadsTable() {
                 {total}
               </span>
             </div>
-            <p className="mt-2 app-muted">Search, review, export, and clean up the leads we have already scraped.</p>
+            <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary disabled:cursor-not-allowed disabled:opacity-60">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-[220px_auto_auto_auto] xl:w-auto">
+            <label className="flex flex-col gap-2">
+              <span className="app-label text-xs">Export filter</span>
+              <select value={exportFilter} onChange={(event) => setExportFilter(event.target.value as LeadExportFilter)} className="app-input h-11">
+                {exportFilterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export CSV"}
             </button>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export Excel"}
             </button>
-            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary">
+            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-11 self-end justify-center">
               <FileSpreadsheet className="h-4 w-4" />
               Sync to Sheets
             </button>
@@ -725,9 +1366,25 @@ export default function LeadsTable() {
         </div>
       </section>
 
-      <section className="app-card">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <label className="relative block w-full xl:max-w-md">
+      <section className="app-card space-y-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="app-label text-xs">Filters</p>
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">Refine the list without changing your saved leads.</p>
+          </div>
+          {filtersActive ? (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110"
+            >
+              Clear filters
+            </button>
+          ) : null}
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+          <label className="relative block w-full">
             <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
             <input
               value={search}
@@ -736,30 +1393,60 @@ export default function LeadsTable() {
               className="app-input w-full pl-11"
             />
           </label>
+          <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)} className="app-input">
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="company">A-Z company name</option>
+          </select>
+        </div>
 
-          <div className="flex flex-1 flex-col gap-4 xl:flex-row xl:items-center xl:justify-end">
-            <div className="flex flex-col gap-2">
-              {sourcePillRows.map((row, rowIndex) => (
-                <div key={`source-row-${rowIndex}`} className="flex flex-wrap gap-2">
-                  {row.map((pill) => (
-                    <button
-                      key={pill.value}
-                      type="button"
-                      onClick={() => setSourceFilter(pill.value)}
-                      className={sourceFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                    >
-                      {pill.label}
-                    </button>
-                  ))}
-                </div>
+        <div className="space-y-4">
+          <div>
+            <span className="app-label text-xs">Source</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {sourcePills.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setSourceFilter(pill.value)}
+                  className={sourceFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                >
+                  {pill.label}
+                </button>
               ))}
             </div>
+          </div>
 
-            <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)} className="app-input">
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-              <option value="company">A-Z company name</option>
-            </select>
+          <div>
+            <span className="app-label text-xs">Website</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {websiteStatusPills.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setWebsiteStatusFilter(pill.value)}
+                  className={websiteStatusFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="app-label text-xs">Restaurant enrichment</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {restaurantEnrichmentPills.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setRestaurantEnrichmentFilter(pill.value)}
+                  className={restaurantEnrichmentFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -814,32 +1501,33 @@ export default function LeadsTable() {
         </div>
       ) : null}
 
-      {!loading && !leads.length ? (
+      {!loading && !leads.length && !filtersActive ? (
         <section className="app-card flex min-h-[360px] flex-col items-center justify-center text-center">
           <div className="rounded-[10px] border border-white/10 bg-white/[0.03] p-4">
             <Users className="h-8 w-8 text-[var(--text-secondary)]" />
           </div>
           <h2 className="mt-5 app-section-title">No leads yet</h2>
-          <p className="mt-2 max-w-md app-muted">Start a scrape from the finder and your saved leads will show up here automatically.</p>
+          <p className="mt-2 max-w-md app-muted">Start with Google Maps, websites, directories, or communities to build your first lead list.</p>
           <Link href="/finder" className="btn-primary mt-6">
-            Go to Lead Finder
+            Find leads
           </Link>
         </section>
       ) : (
         <section className="app-card overflow-hidden p-0">
-          <table className="w-full table-fixed text-left text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[1120px] table-fixed text-left text-sm">
             <colgroup>
-              <col style={{ width: "40px" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.3)" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.2)" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.2)" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.1)" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.1)" }} />
-              <col style={{ width: "calc((100% - 40px) * 0.1)" }} />
+              <col style={{ width: "44px" }} />
+              <col style={{ width: "30%" }} />
+              <col style={{ width: "18%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "22%" }} />
+              <col style={{ width: "9%" }} />
+              <col style={{ width: "96px" }} />
             </colgroup>
             <thead className="border-b border-[var(--border)] bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
               <tr>
-                <th className="px-3 py-3">
+                <th className="px-4 py-3">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
@@ -847,12 +1535,12 @@ export default function LeadsTable() {
                     className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
                   />
                 </th>
-                <th className="px-3 py-3 font-medium">Company</th>
-                <th className="px-3 py-3 font-medium">Location</th>
-                <th className="px-3 py-3 font-medium">Industry</th>
-                <th className="px-3 py-3 font-medium">Source</th>
-                <th className="px-3 py-3 font-medium">Date</th>
-                <th className="px-3 py-3 font-medium">Actions</th>
+                <th className="px-4 py-3 font-medium">Lead</th>
+                <th className="px-4 py-3 font-medium">Contact</th>
+                <th className="px-4 py-3 font-medium">Email</th>
+                <th className="px-4 py-3 font-medium">Delivery intelligence</th>
+                <th className="px-4 py-3 font-medium">Date</th>
+                <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -872,7 +1560,7 @@ export default function LeadsTable() {
                   const rowId = lead.id ?? `${lead.company_name}-${lead.source_url}`;
 
                   return (
-                    <LeadRow
+                    <ProfessionalLeadRow
                       key={rowId}
                       lead={lead}
                       isExpanded={expandedLeadId === rowId}
@@ -883,7 +1571,7 @@ export default function LeadsTable() {
                           handleSelectOne(lead.id, checked);
                         }
                       }}
-                      onCopyEmail={() => void handleCopyEmail(lead.email)}
+                      onCopyEmail={() => void handleCopyEmail(cleanSafePublicEmail(lead.email))}
                       onEnrichEmail={() => {
                         if (lead.id) {
                           void handleEnrichLead(lead.id);
@@ -901,12 +1589,21 @@ export default function LeadsTable() {
               ) : (
                 <tr>
                   <td colSpan={7} className="px-4 py-16 text-center text-[var(--text-secondary)]">
-                    No leads match your current filters.
+                    <div className="mx-auto max-w-md">
+                      <h2 className="text-lg font-semibold text-white">No leads match these filters</h2>
+                      <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                        Try changing the source, website, or restaurant enrichment filter.
+                      </p>
+                      <button type="button" onClick={clearFilters} className="btn-secondary mt-5 justify-center">
+                        Clear filters
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -934,6 +1631,7 @@ export default function LeadsTable() {
         onClose={() => setShowSheetModal(false)}
         selectedIds={selectedIds}
         totalLeads={total}
+        defaultSyncFilter={exportFilter}
         onActionComplete={() => setSelectedIds([])}
       />
     </div>

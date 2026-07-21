@@ -155,85 +155,138 @@ export async function scrapeWebsite(url: string, prompt = WEBSITE_PROMPT): Promi
   }
 }
 
+const GOOGLE_PLACES_PAGE_SIZE = 20;
+const GOOGLE_PLACES_PAGE_DELAY_MS = 2000;
+const GOOGLE_PLACES_DETAIL_CONCURRENCY = 5;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
+  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+
+      try {
+        results[index] = { status: "fulfilled", value: await mapper(items[index] as T) };
+      } catch (reason) {
+        results[index] = { status: "rejected", reason };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, worker));
+  return results;
+}
+
 export async function scrapeGoogleMaps(query: string, location: string, numResults: number): Promise<Lead[]> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
     throw new Error("GOOGLE_PLACES_API_KEY is not configured.");
   }
 
+  const safeNumResults = Math.min(Math.max(Math.floor(numResults), 1), 50);
   const sourceUrl = `maps:${query} ${location}`;
-  const textSearchResponse = await fetch("https://places.googleapis.com/v1/places:searchText", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.types",
-    },
-    body: JSON.stringify({
-      textQuery: `${query} in ${location}`,
-    }),
+  const places: Array<{ id: string }> = [];
+  let pageToken: string | undefined;
+
+  while (places.length < safeNumResults) {
+    if (pageToken) {
+      await sleep(GOOGLE_PLACES_PAGE_DELAY_MS);
+    }
+
+    const textSearchResponse = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "places.id,nextPageToken",
+      },
+      body: JSON.stringify({
+        textQuery: `${query} in ${location}`,
+        pageSize: Math.min(GOOGLE_PLACES_PAGE_SIZE, safeNumResults - places.length),
+        ...(pageToken ? { pageToken } : {}),
+      }),
+    });
+
+    if (!textSearchResponse.ok) {
+      throw new Error(`Google Places text search failed with status ${textSearchResponse.status}`);
+    }
+
+    const textSearchData = (await textSearchResponse.json()) as {
+      places?: Array<{ id?: string }>;
+      nextPageToken?: string;
+      error?: { message?: string };
+    };
+
+    if (textSearchData.error?.message) {
+      throw new Error(textSearchData.error.message);
+    }
+
+    const pagePlaces = (textSearchData.places ?? []).filter(
+      (place): place is { id: string } => typeof place.id === "string" && place.id.length > 0,
+    );
+
+    places.push(...pagePlaces);
+    pageToken = textSearchData.nextPageToken;
+
+    if (!pageToken || !pagePlaces.length) {
+      break;
+    }
+  }
+
+  const detailResults = await mapWithConcurrency(places.slice(0, safeNumResults), GOOGLE_PLACES_DETAIL_CONCURRENCY, async (place) => {
+    const detailsResponse = await fetch(`https://places.googleapis.com/v1/places/${place.id}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask":
+          "id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,types,businessStatus",
+      },
+    });
+
+    if (!detailsResponse.ok) {
+      throw new Error(`Google Places details failed with status ${detailsResponse.status}`);
+    }
+
+    const detailsData = (await detailsResponse.json()) as {
+      id?: string;
+      displayName?: { text?: string };
+      formattedAddress?: string;
+      nationalPhoneNumber?: string;
+      websiteUri?: string;
+      types?: string[];
+      businessStatus?: string;
+      error?: { message?: string };
+    };
+
+    if (detailsData.error?.message) {
+      throw new Error(detailsData.error.message);
+    }
+
+    return {
+      company_name: detailsData.displayName?.text ?? "Unknown",
+      phone: detailsData.nationalPhoneNumber,
+      website: detailsData.websiteUri,
+      location: detailsData.formattedAddress,
+      industry: Array.isArray(detailsData.types) ? detailsData.types.join(", ") : undefined,
+      source: "google_maps" as const,
+      source_external_id: detailsData.id,
+      source_url: sourceUrl,
+      raw_metadata: {
+        google_place_id: detailsData.id,
+        business_status: detailsData.businessStatus,
+        types: detailsData.types,
+      },
+      scraped_at: new Date().toISOString(),
+    } satisfies Lead;
   });
-
-  if (!textSearchResponse.ok) {
-    throw new Error(`Google Places text search failed with status ${textSearchResponse.status}`);
-  }
-
-  const textSearchData = (await textSearchResponse.json()) as {
-    places?: Array<{ id?: string }>;
-    error?: { message?: string };
-  };
-
-  if (textSearchData.error?.message) {
-    throw new Error(textSearchData.error.message);
-  }
-
-  const places = (textSearchData.places ?? [])
-    .filter((place): place is { id: string } => typeof place.id === "string" && place.id.length > 0)
-    .slice(0, numResults);
-
-  const detailResults = await Promise.allSettled(
-    places.map(async (place) => {
-      const detailsResponse = await fetch(`https://places.googleapis.com/v1/places/${place.id}`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Goog-Api-Key": apiKey,
-          "X-Goog-FieldMask":
-            "id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,types,businessStatus",
-        },
-      });
-
-      if (!detailsResponse.ok) {
-        throw new Error(`Google Places details failed with status ${detailsResponse.status}`);
-      }
-
-      const detailsData = (await detailsResponse.json()) as {
-        id?: string;
-        displayName?: { text?: string };
-        formattedAddress?: string;
-        nationalPhoneNumber?: string;
-        websiteUri?: string;
-        types?: string[];
-        businessStatus?: string;
-        error?: { message?: string };
-      };
-
-      if (detailsData.error?.message) {
-        throw new Error(detailsData.error.message);
-      }
-
-      return {
-        company_name: detailsData.displayName?.text ?? "Unknown",
-        phone: detailsData.nationalPhoneNumber,
-        website: detailsData.websiteUri,
-        location: detailsData.formattedAddress,
-        industry: Array.isArray(detailsData.types) ? detailsData.types.join(", ") : undefined,
-        source: "google_maps" as const,
-        source_url: sourceUrl,
-        scraped_at: new Date().toISOString(),
-      } satisfies Lead;
-    }),
-  );
 
   return detailResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
