@@ -6,6 +6,7 @@ import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload
 import JobStatusCard from "@/components/JobStatusCard";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { isRestaurantLead, isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
@@ -298,6 +299,21 @@ function truncateText(value?: string, maxLength = 120) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1).trim()}...` : value;
 }
 
+function displayDomain(url?: string) {
+  const trimmed = url?.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    return parsed.hostname.replace(/^www\./i, "");
+  } catch {
+    return trimmed.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split("/")[0] ?? trimmed;
+  }
+}
+
 function LeadDetail({ label, value }: { label: string; value?: string }) {
   return (
     <div>
@@ -344,6 +360,10 @@ export default function FinderPage() {
   const [communityLoading, setCommunityLoading] = useState(false);
   const [communityError, setCommunityError] = useState("");
   const [communityResult, setCommunityResult] = useState<CommunityResult | null>(null);
+  const mapsSearchLooksRestaurant = isRestaurantSearchText(`${mapsQuery} ${mapsLocation}`);
+  const showRestaurantPreview =
+    mapsRestaurantEnrichment && (mapsSearchLooksRestaurant || Boolean(mapsResult?.leads?.some((lead) => isRestaurantLead(lead))));
+  const mapsResultHasNoEmails = Boolean(mapsResult?.leads.length) && Boolean(mapsResult?.leads.every((lead) => !cleanSafePublicEmail(lead.email)));
   const [communityAvailability, setCommunityAvailability] = useState({
     communities: true,
     hackernews: true,
@@ -931,6 +951,12 @@ export default function FinderPage() {
               </span>
             </label>
 
+            {mapsRestaurantEnrichment && !mapsSearchLooksRestaurant ? (
+              <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                Restaurant enrichment is designed for restaurants and food businesses.
+              </div>
+            ) : null}
+
             {mapsRestaurantEnrichment ? (
               <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -1017,20 +1043,31 @@ export default function FinderPage() {
                   </div>
                 ) : null}
 
+                {mapsResultHasNoEmails ? (
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-secondary)]">
+                    Leads saved. No public emails were found yet. Try Find email, use phone outreach, or open the contact page.
+                  </div>
+                ) : null}
+
                 {mapsResult.leads.length ? (
                   <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
                   <div className="overflow-x-auto">
-                    <table className="min-w-[1320px] text-left text-sm">
+                    <table className={showRestaurantPreview ? "min-w-[1240px] text-left text-sm" : "min-w-[980px] text-left text-sm"}>
                       <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
                         <tr>
                           <th className="px-4 py-3 font-medium">Name</th>
+                          {!showRestaurantPreview ? <th className="px-4 py-3 font-medium">Website</th> : null}
                           <th className="px-4 py-3 font-medium">Email</th>
-                          <th className="px-4 py-3 font-medium">Uber Eats</th>
-                          <th className="px-4 py-3 font-medium">DoorDash</th>
-                          <th className="px-4 py-3 font-medium">Grubhub</th>
-                          <th className="px-4 py-3 font-medium">Deliveroo</th>
-                          <th className="px-4 py-3 font-medium">Just Eat</th>
-                          <th className="px-4 py-3 font-medium">Enrichment</th>
+                          {showRestaurantPreview ? (
+                            <>
+                              <th className="px-4 py-3 font-medium">Uber Eats</th>
+                              <th className="px-4 py-3 font-medium">DoorDash</th>
+                              <th className="px-4 py-3 font-medium">Grubhub</th>
+                              <th className="px-4 py-3 font-medium">Deliveroo</th>
+                              <th className="px-4 py-3 font-medium">Just Eat</th>
+                            </>
+                          ) : null}
+                          <th className="px-4 py-3 font-medium">Status</th>
                           <th className="px-4 py-3 font-medium">Location</th>
                           <th className="px-4 py-3 font-medium">Phone</th>
                           <th className="px-4 py-3 font-medium">Industry</th>
@@ -1047,6 +1084,9 @@ export default function FinderPage() {
                               </div>
                               <p className="mt-2 text-xs text-[var(--text-secondary)]">{lead.website?.trim() || "No website"}</p>
                             </td>
+                            {!showRestaurantPreview ? (
+                              <td className="px-4 py-4 text-[var(--text-secondary)]">{displayDomain(lead.website) || "No website"}</td>
+                            ) : null}
                             <td className="px-4 py-4">
                               <div className="space-y-2">
                                 {restaurantEmailStatus(lead)}
@@ -1058,23 +1098,29 @@ export default function FinderPage() {
                                 ) : null}
                               </div>
                             </td>
+                            {showRestaurantPreview ? (
+                              <>
+                                <td className="px-4 py-4">
+                                  <DeliveryPlatformCell lead={lead} platform="ubereats" />
+                                </td>
+                                <td className="px-4 py-4">
+                                  <DeliveryPlatformCell lead={lead} platform="doordash" />
+                                </td>
+                                <td className="px-4 py-4">
+                                  <DeliveryPlatformCell lead={lead} platform="grubhub" />
+                                </td>
+                                <td className="px-4 py-4">
+                                  <DeliveryPlatformCell lead={lead} platform="deliveroo" />
+                                </td>
+                                <td className="px-4 py-4">
+                                  <DeliveryPlatformCell lead={lead} platform="justeat" />
+                                </td>
+                              </>
+                            ) : null}
                             <td className="px-4 py-4">
-                              <DeliveryPlatformCell lead={lead} platform="ubereats" />
-                            </td>
-                            <td className="px-4 py-4">
-                              <DeliveryPlatformCell lead={lead} platform="doordash" />
-                            </td>
-                            <td className="px-4 py-4">
-                              <DeliveryPlatformCell lead={lead} platform="grubhub" />
-                            </td>
-                            <td className="px-4 py-4">
-                              <DeliveryPlatformCell lead={lead} platform="deliveroo" />
-                            </td>
-                            <td className="px-4 py-4">
-                              <DeliveryPlatformCell lead={lead} platform="justeat" />
-                            </td>
-                            <td className="px-4 py-4">
-                              {statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)}
+                              {showRestaurantPreview
+                                ? statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)
+                                : scrapeStatusBadge(lead.scrape_status) ?? statusBadge("Saved", "found")}
                             </td>
                             <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.location ?? "—"}</td>
                             <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.phone ?? "—"}</td>

@@ -380,6 +380,7 @@ async function enrichRestaurantLead(lead: Lead, selectedPlatforms: DeliveryPlatf
         restaurant_enrichment: {
           email_status: emailResult.status,
           email_source_url: emailResult.sourceUrl,
+          contact_page_url: emailResult.contactPageUrl,
           delivery_platforms: deliveryResult.results,
           selected_platforms: selectedPlatforms,
           enriched_at: enrichedAt,

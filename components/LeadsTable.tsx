@@ -7,6 +7,7 @@ import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, S
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { isRestaurantLead } from "@/lib/lead-kind";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
@@ -395,6 +396,37 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
   );
 }
 
+function contactPageUrl(lead: Lead) {
+  const contactEnrichment = lead.raw_metadata?.contact_enrichment;
+  if (
+    contactEnrichment &&
+    typeof contactEnrichment === "object" &&
+    "contact_page_url" in contactEnrichment &&
+    typeof contactEnrichment.contact_page_url === "string"
+  ) {
+    return contactEnrichment.contact_page_url;
+  }
+
+  const restaurantEnrichment = lead.raw_metadata?.restaurant_enrichment;
+  if (
+    restaurantEnrichment &&
+    typeof restaurantEnrichment === "object" &&
+    "contact_page_url" in restaurantEnrichment &&
+    typeof restaurantEnrichment.contact_page_url === "string"
+  ) {
+    return restaurantEnrichment.contact_page_url;
+  }
+
+  return undefined;
+}
+
+function hasDeliverySignal(lead: Lead) {
+  return deliveryPlatforms.some((platform) => {
+    const status = deliveryPlatformStatus(lead, platform.value);
+    return status === "found" || status === "unclear" || status === "error";
+  });
+}
+
 function PlatformSummaryBadges({ lead }: { lead: Lead }) {
   return (
     <div className="flex flex-wrap gap-1.5">
@@ -410,6 +442,30 @@ function PlatformSummaryBadges({ lead }: { lead: Lead }) {
       })}
     </div>
   );
+}
+
+function GeneralIntelligenceBadges({ lead }: { lead: Lead }) {
+  const safeEmail = cleanSafePublicEmail(lead.email);
+  const pageUrl = contactPageUrl(lead);
+
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {statusBadge(lead.website ? "Website available" : "No website", lead.website ? "found" : "not_checked")}
+      {statusBadge(safeEmail ? "Public email found" : "No public email", safeEmail ? "found" : "not_found")}
+      {pageUrl ? statusBadge("Contact page found", "found") : null}
+      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
+        {sourceLabel(lead.source)}
+      </span>
+    </div>
+  );
+}
+
+function IntelligenceBadges({ lead }: { lead: Lead }) {
+  if (isRestaurantLead(lead) || hasDeliverySignal(lead)) {
+    return <PlatformSummaryBadges lead={lead} />;
+  }
+
+  return <GeneralIntelligenceBadges lead={lead} />;
 }
 
 function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
@@ -568,6 +624,8 @@ function LeadRow({
   onToggleExpand,
   onToggleSelect,
   onCopyEmail,
+  onCopyLead,
+  onCopyPhone,
   onDelete,
   onEnrichEmail,
   isEnriching,
@@ -578,6 +636,8 @@ function LeadRow({
   onToggleExpand: () => void;
   onToggleSelect: (checked: boolean) => void;
   onCopyEmail: () => void;
+  onCopyLead: () => void;
+  onCopyPhone: () => void;
   onDelete: () => void;
   onEnrichEmail: () => void;
   isEnriching: boolean;
@@ -720,6 +780,8 @@ function ProfessionalLeadRow({
   onToggleExpand,
   onToggleSelect,
   onCopyEmail,
+  onCopyLead,
+  onCopyPhone,
   onDelete,
   onEnrichEmail,
   isEnriching,
@@ -730,6 +792,8 @@ function ProfessionalLeadRow({
   onToggleExpand: () => void;
   onToggleSelect: (checked: boolean) => void;
   onCopyEmail: () => void;
+  onCopyLead: () => void;
+  onCopyPhone: () => void;
   onDelete: () => void;
   onEnrichEmail: () => void;
   isEnriching: boolean;
@@ -738,6 +802,8 @@ function ProfessionalLeadRow({
   const canFindEmail = needsEmailEnrichment(lead);
   const safeEmail = cleanSafePublicEmail(lead.email);
   const websiteLabel = displayDomain(lead.website) || "No website";
+  const pageUrl = contactPageUrl(lead);
+  const showDeliveryIntelligence = isRestaurantLead(lead) || hasDeliverySignal(lead);
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -787,7 +853,7 @@ function ProfessionalLeadRow({
           </div>
         </td>
         <td className="px-4 py-5 align-top">
-          <PlatformSummaryBadges lead={lead} />
+          <IntelligenceBadges lead={lead} />
         </td>
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
         <td className="px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
@@ -802,7 +868,7 @@ function ProfessionalLeadRow({
             >
               <ExternalLink className="h-4 w-4" />
             </a>
-            <button type="button" onClick={onCopyEmail} className="icon-button h-8 w-8" aria-label={`Copy ${lead.company_name} email`}>
+            <button type="button" onClick={onCopyLead} className="icon-button h-8 w-8" aria-label={`Copy ${lead.company_name} lead details`} title="Copy lead">
               <Copy className="h-4 w-4" />
             </button>
             {canFindEmail ? (
@@ -834,14 +900,17 @@ function ProfessionalLeadRow({
                     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
                       {sourceLabel(lead.source)}
                     </span>
-                    {statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)}
+                    {showDeliveryIntelligence
+                      ? statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)
+                      : null}
                   </div>
                   <p className="mt-2 text-sm text-[var(--text-secondary)]">
                     Scraped {formatDate(lead.scraped_at) || formatRelative(lead.scraped_at)}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <SmartLink href={lead.website} label={displayDomain(lead.website) || "Open website"} />
+                  <SmartLink href={lead.website} label="Open website" />
+                  <SmartLink href={pageUrl} label="Open contact page" />
                   <SmartLink href={lead.source_url?.startsWith("http") ? lead.source_url : undefined} label="Open source" />
                 </div>
               </div>
@@ -879,18 +948,36 @@ function ProfessionalLeadRow({
                         No public email found.
                       </div>
                     )}
+                    <div className="flex flex-wrap gap-2">
+                      <SmartLink href={lead.website} label="Open website" />
+                      <SmartLink href={pageUrl} label="Open contact page" />
+                      {safeEmail ? (
+                        <button type="button" onClick={onCopyEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-white/[0.06]">
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy email
+                        </button>
+                      ) : null}
+                      {lead.phone ? (
+                        <button type="button" onClick={onCopyPhone} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-white/[0.06]">
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy phone
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </section>
               </div>
 
-              <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
-                <p className="app-label text-xs">Delivery presence</p>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                  {deliveryPlatforms.map((platform) => (
-                    <DeliveryPresenceCard key={platform.value} lead={lead} platform={platform.value} />
-                  ))}
-                </div>
-              </section>
+              {showDeliveryIntelligence ? (
+                <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                  <p className="app-label text-xs">Delivery intelligence</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    {deliveryPlatforms.map((platform) => (
+                      <DeliveryPresenceCard key={platform.value} lead={lead} platform={platform.value} />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               {hasNotes ? (
                 <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
@@ -1187,12 +1274,45 @@ export default function LeadsTable() {
     }
   }
 
+  async function handleCopyPhone(phone?: string) {
+    if (!phone?.trim()) {
+      showToast("This lead does not have a phone number.", "error");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(phone.trim());
+      showToast("Phone copied to clipboard.", "success");
+    } catch {
+      showToast("Unable to copy phone.", "error");
+    }
+  }
+
+  async function handleCopyLead(lead: Lead) {
+    const lines = [
+      lead.company_name,
+      lead.website ? `Website: ${lead.website}` : "Website: Not listed",
+      cleanSafePublicEmail(lead.email) ? `Email: ${cleanSafePublicEmail(lead.email)}` : "Email: Not found",
+      lead.phone ? `Phone: ${lead.phone}` : "Phone: Not listed",
+      lead.location ? `Location: ${lead.location}` : "",
+      lead.industry ? `Industry: ${lead.industry}` : "",
+      `Source: ${sourceLabel(lead.source)}`,
+    ].filter(Boolean);
+
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      showToast("Lead details copied.", "success");
+    } catch {
+      showToast("Unable to copy lead.", "error");
+    }
+  }
+
   async function enrichLead(id: string, options: { quiet?: boolean } = {}) {
     setEnrichingIds((current) => Array.from(new Set([...current, id])));
     setError("");
 
     try {
-      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich`, { method: "POST" });
+      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich-email`, { method: "POST" });
       const payload = (await parseResponseSafely(response)) as unknown as Lead & {
         error?: string;
         message?: string;
@@ -1208,9 +1328,10 @@ export default function LeadsTable() {
       }
 
       if (!options.quiet) {
+        const enrichedEmail = cleanSafePublicEmail(payload.email);
         showToast(
-          payload.email ? "Email found and saved." : payload.message ?? "No public email was found on this website.",
-          payload.email ? "success" : "error",
+          enrichedEmail ? "Email found and saved." : payload.message ?? "No public email found. Try the website contact form or phone.",
+          enrichedEmail ? "success" : "error",
         );
       }
 
@@ -1538,7 +1659,7 @@ export default function LeadsTable() {
                 <th className="px-4 py-3 font-medium">Lead</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Delivery intelligence</th>
+                <th className="px-4 py-3 font-medium">Intelligence</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
@@ -1572,6 +1693,8 @@ export default function LeadsTable() {
                         }
                       }}
                       onCopyEmail={() => void handleCopyEmail(cleanSafePublicEmail(lead.email))}
+                      onCopyLead={() => void handleCopyLead(lead)}
+                      onCopyPhone={() => void handleCopyPhone(lead.phone)}
                       onEnrichEmail={() => {
                         if (lead.id) {
                           void handleEnrichLead(lead.id);

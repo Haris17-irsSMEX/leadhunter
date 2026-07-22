@@ -6,6 +6,7 @@ import type { DeliveryPlatformStatus } from "@/lib/types";
 export type RestaurantEmailResult = {
   email?: string | null;
   sourceUrl?: string;
+  contactPageUrl?: string;
   confidence?: number;
   status: Extract<DeliveryPlatformStatus, "found" | "not_found" | "error" | "not_checked">;
   error?: string;
@@ -13,7 +14,7 @@ export type RestaurantEmailResult = {
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const REQUEST_TIMEOUT_MS = 8_000;
-const PAGE_PATHS = ["", "/contact", "/contact-us", "/about", "/about-us", "/locations"] as const;
+const PAGE_PATHS = ["", "/contact", "/contact-us", "/about", "/about-us", "/team", "/services", "/locations"] as const;
 const PREFERRED_PREFIXES = ["info", "hello", "contact", "reservations", "booking", "manager", "events", "catering"];
 
 function normalizeWebsiteUrl(website?: string) {
@@ -140,6 +141,7 @@ export async function findRestaurantPublicEmail(website?: string): Promise<Resta
   }
 
   let attempted = false;
+  let contactPageUrl: string | undefined;
 
   for (const path of PAGE_PATHS) {
     const targetUrl = pageUrl(baseUrl, path);
@@ -147,12 +149,16 @@ export async function findRestaurantPublicEmail(website?: string): Promise<Resta
     try {
       attempted = true;
       const html = await fetchPublicPage(targetUrl);
+      if (!contactPageUrl && /\/(contact|contact-us|team|services)$/i.test(new URL(targetUrl).pathname)) {
+        contactPageUrl = targetUrl;
+      }
       const [email] = extractEmails(html);
 
       if (email) {
         return {
           email,
           sourceUrl: targetUrl,
+          contactPageUrl: contactPageUrl ?? targetUrl,
           confidence: confidenceForEmail(email, targetUrl),
           status: "found",
         };
@@ -162,5 +168,7 @@ export async function findRestaurantPublicEmail(website?: string): Promise<Resta
     }
   }
 
-  return attempted ? { status: "not_found", email: null } : { status: "error", email: null, error: "Unable to check restaurant website." };
+  return attempted
+    ? { status: "not_found", email: null, contactPageUrl }
+    : { status: "error", email: null, error: "Unable to check restaurant website." };
 }
