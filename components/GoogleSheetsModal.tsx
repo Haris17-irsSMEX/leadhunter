@@ -32,6 +32,12 @@ async function parseResponseSafely(response: Response) {
 
 const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
   { label: "All visible leads", value: "all" },
+  { label: "Contactable leads", value: "contactable" },
+  { label: "Email found", value: "email_found" },
+  { label: "Contact page found", value: "contact_page_found" },
+  { label: "Phone found", value: "phone_found" },
+  { label: "No public email", value: "no_public_email" },
+  { label: "Not contactable", value: "not_contactable" },
   { label: "Has public email", value: "has_public_email" },
   { label: "Any delivery platform found", value: "any_delivery_found" },
   { label: "Uber Eats found", value: "ubereats_found" },

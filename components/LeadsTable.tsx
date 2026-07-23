@@ -5,6 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Sparkles, Trash2, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
+import {
+  getBestContactMethod,
+  getContactabilityStatus,
+  getContactPageUrl,
+  normalizeContactFilter,
+  type ContactFilter,
+} from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
@@ -395,30 +402,6 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
   );
 }
 
-function contactPageUrl(lead: Lead) {
-  const contactEnrichment = lead.raw_metadata?.contact_enrichment;
-  if (
-    contactEnrichment &&
-    typeof contactEnrichment === "object" &&
-    "contact_page_url" in contactEnrichment &&
-    typeof contactEnrichment.contact_page_url === "string"
-  ) {
-    return contactEnrichment.contact_page_url;
-  }
-
-  const restaurantEnrichment = lead.raw_metadata?.restaurant_enrichment;
-  if (
-    restaurantEnrichment &&
-    typeof restaurantEnrichment === "object" &&
-    "contact_page_url" in restaurantEnrichment &&
-    typeof restaurantEnrichment.contact_page_url === "string"
-  ) {
-    return restaurantEnrichment.contact_page_url;
-  }
-
-  return undefined;
-}
-
 function hasDeliverySignal(lead: Lead) {
   return (
     Boolean(lead.restaurant_enrichment_status && lead.restaurant_enrichment_status !== "not_checked") ||
@@ -448,10 +431,12 @@ function PlatformSummaryBadges({ lead }: { lead: Lead }) {
 
 function GeneralIntelligenceBadges({ lead }: { lead: Lead }) {
   const safeEmail = cleanSafePublicEmail(lead.email);
-  const pageUrl = contactPageUrl(lead);
+  const pageUrl = getContactPageUrl(lead);
+  const contactability = getContactabilityStatus(lead);
 
   return (
     <div className="flex flex-wrap gap-1.5">
+      {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
       {statusBadge(lead.website ? "Website available" : "No website", lead.website ? "found" : "not_checked")}
       {statusBadge(safeEmail ? "Public email found" : "No public email", safeEmail ? "found" : "not_found")}
       {pageUrl ? statusBadge("Contact page found", "found") : null}
@@ -804,7 +789,9 @@ function ProfessionalLeadRow({
   const canFindEmail = needsEmailEnrichment(lead);
   const safeEmail = cleanSafePublicEmail(lead.email);
   const websiteLabel = displayDomain(lead.website) || "No website";
-  const pageUrl = contactPageUrl(lead);
+  const pageUrl = getContactPageUrl(lead) ?? undefined;
+  const bestContactMethod = getBestContactMethod(lead);
+  const contactability = getContactabilityStatus(lead);
   const showDeliveryIntelligence = hasDeliverySignal(lead);
   const hasNotes =
     Boolean(lead.description?.trim()) ||
@@ -850,8 +837,18 @@ function ProfessionalLeadRow({
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
+            {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
             {safeEmail ? statusBadge("Email found", "found") : statusBadge("No public email", "not_found")}
             {safeEmail ? <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{safeEmail}</p> : null}
+            {!safeEmail && pageUrl ? (
+              <SmartLink href={pageUrl} label="Use contact form" className="max-w-fit" />
+            ) : null}
+            {!safeEmail && !pageUrl && lead.phone ? (
+              <p className="text-xs font-medium text-[var(--text-secondary)]">Phone outreach</p>
+            ) : null}
+            {!safeEmail && !pageUrl && !lead.phone && lead.website ? (
+              <p className="text-xs font-medium text-[var(--text-muted)]">Website only</p>
+            ) : null}
             {!safeEmail && canFindEmail ? (
               <button
                 type="button"
@@ -938,6 +935,8 @@ function ProfessionalLeadRow({
                     <InfoItem label="Location" value={lead.location} />
                     <InfoItem label="Phone" value={lead.phone} />
                     <InfoItem label="Website" value={displayDomain(lead.website)} />
+                    <InfoItem label="Best contact method" value={bestContactMethod} />
+                    <InfoItem label="Contactability" value={contactability} />
                     <InfoItem label="Scraped" value={formatDate(lead.scraped_at)} />
                   </div>
                   <div className="mt-4">
@@ -962,6 +961,7 @@ function ProfessionalLeadRow({
                     ) : (
                       <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3 text-sm text-[var(--text-secondary)]">
                         No public email found.
+                        {pageUrl || lead.phone ? " Use the contact page or phone outreach." : null}
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -1029,6 +1029,7 @@ export default function LeadsTable() {
   const sourceParamFilter = toSourceFilter(searchParams.get("source"));
   const websiteParamFilter = toWebsiteStatusFilter(searchParams.get("website_status"));
   const restaurantEnrichmentParamFilter = toRestaurantEnrichmentFilter(searchParams.get("restaurant_enrichment"));
+  const contactParamFilter = normalizeContactFilter(searchParams.get("contact_filter"));
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1036,6 +1037,7 @@ export default function LeadsTable() {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>(sourceParamFilter);
   const [websiteStatusFilter, setWebsiteStatusFilter] = useState<WebsiteStatusFilter>(websiteParamFilter);
   const [restaurantEnrichmentFilter, setRestaurantEnrichmentFilter] = useState<RestaurantEnrichmentFilter>(restaurantEnrichmentParamFilter);
+  const [contactFilter, setContactFilter] = useState<ContactFilter>(contactParamFilter);
   const [sort, setSort] = useState<SortOption>("newest");
   const [expandedLeadId, setExpandedLeadId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1091,6 +1093,10 @@ export default function LeadsTable() {
         query.set("restaurant_enrichment", restaurantEnrichmentFilter);
       }
 
+      if (contactFilter !== "all") {
+        query.set("contact_filter", contactFilter);
+      }
+
       const response = await fetch(`/api/leads?${query.toString()}`, { cache: "no-store" });
       const payload = (await parseResponseSafely(response)) as LeadsResponse & { error?: string };
 
@@ -1115,7 +1121,7 @@ export default function LeadsTable() {
 
   useEffect(() => {
     void fetchLeads(1);
-  }, [jobIdFilter, sourceFilter, websiteStatusFilter, restaurantEnrichmentFilter]);
+  }, [jobIdFilter, sourceFilter, websiteStatusFilter, restaurantEnrichmentFilter, contactFilter]);
 
   useEffect(() => {
     setSourceFilter(sourceParamFilter);
@@ -1128,6 +1134,10 @@ export default function LeadsTable() {
   useEffect(() => {
     setRestaurantEnrichmentFilter(restaurantEnrichmentParamFilter);
   }, [restaurantEnrichmentParamFilter]);
+
+  useEffect(() => {
+    setContactFilter(contactParamFilter);
+  }, [contactParamFilter]);
 
   useEffect(() => {
     if (!copyMessage) {
@@ -1170,13 +1180,19 @@ export default function LeadsTable() {
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
   const selectedEnrichableLeads = leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && needsEmailEnrichment(lead));
-  const filtersActive = sourceFilter !== "all" || websiteStatusFilter !== "all" || restaurantEnrichmentFilter !== "all" || Boolean(search.trim());
+  const filtersActive =
+    sourceFilter !== "all" ||
+    websiteStatusFilter !== "all" ||
+    restaurantEnrichmentFilter !== "all" ||
+    contactFilter !== "all" ||
+    Boolean(search.trim());
 
   function clearFilters() {
     setSearch("");
     setSourceFilter("all");
     setWebsiteStatusFilter("all");
     setRestaurantEnrichmentFilter("all");
+    setContactFilter("all");
   }
 
   function removeDeleted(ids: string[]) {
@@ -1457,8 +1473,23 @@ export default function LeadsTable() {
     { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
     { label: "Not checked", value: "not_checked" },
   ];
+  const contactFilterPills: Array<{ label: string; value: ContactFilter }> = [
+    { label: "All leads", value: "all" },
+    { label: "Contactable leads", value: "contactable" },
+    { label: "Email found", value: "email_found" },
+    { label: "Contact page found", value: "contact_page_found" },
+    { label: "Phone found", value: "phone_found" },
+    { label: "No public email", value: "no_public_email" },
+    { label: "Not contactable", value: "not_contactable" },
+  ];
   const exportFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
     { label: "All leads", value: "all" },
+    { label: "Contactable leads", value: "contactable" },
+    { label: "Email found", value: "email_found" },
+    { label: "Contact page found", value: "contact_page_found" },
+    { label: "Phone found", value: "phone_found" },
+    { label: "No public email", value: "no_public_email" },
+    { label: "Not contactable", value: "not_contactable" },
     { label: "Has public email", value: "has_public_email" },
     { label: "Any delivery platform found", value: "any_delivery_found" },
     { label: "Uber Eats found", value: "ubereats_found" },
@@ -1585,6 +1616,22 @@ export default function LeadsTable() {
                   type="button"
                   onClick={() => setRestaurantEnrichmentFilter(pill.value)}
                   className={restaurantEnrichmentFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <span className="app-label text-xs">Contactability</span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {contactFilterPills.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setContactFilter(pill.value)}
+                  className={contactFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
                 >
                   {pill.label}
                 </button>

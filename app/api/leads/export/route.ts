@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { getBestContactMethod, getContactabilityStatus, getContactPageUrl } from "@/lib/contactability";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
@@ -17,9 +18,12 @@ type ExportColumn = {
 const EXPORT_COLUMNS: ExportColumn[] = [
   { label: "Company Name", value: (lead) => cleanText(lead.company_name) },
   { label: "Website", value: (lead) => cleanText(lead.website) },
+  { label: "Best Contact Method", value: (lead) => getBestContactMethod(lead) },
+  { label: "Contactability", value: (lead) => getContactabilityStatus(lead) },
   { label: "Email", value: (lead) => cleanSafePublicEmail(lead.email) },
   { label: "Email Source", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : "") },
   { label: "Email Confidence", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "") },
+  { label: "Contact Page URL", value: (lead) => cleanText(getContactPageUrl(lead)) },
   { label: "Phone", value: (lead) => cleanText(lead.phone) },
   { label: "Location", value: (lead) => cleanText(lead.location) },
   { label: "Country", value: (lead) => cleanText(lead.country) },

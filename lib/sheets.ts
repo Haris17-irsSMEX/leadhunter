@@ -1,4 +1,5 @@
 import * as jose from "jose";
+import { getBestContactMethod, getContactabilityStatus, getContactPageUrl } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { Lead } from "@/lib/types";
@@ -6,9 +7,12 @@ import type { Lead } from "@/lib/types";
 export const HEADERS = [
   "Company Name",
   "Website",
+  "Best Contact Method",
+  "Contactability",
   "Email",
   "Email Source",
   "Email Confidence",
+  "Contact Page URL",
   "Phone",
   "Location",
   "Country",
@@ -156,9 +160,12 @@ export function leadToRow(lead: Lead): string[] {
   return [
     cleanText(lead.company_name),
     cleanText(lead.website),
+    getBestContactMethod(lead),
+    getContactabilityStatus(lead),
     cleanSafePublicEmail(lead.email),
     cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : "",
     cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "",
+    cleanText(getContactPageUrl(lead)),
     cleanText(lead.phone),
     cleanText(lead.location),
     cleanText(lead.country),
@@ -411,7 +418,7 @@ async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: nu
 }
 
 async function writeHeaders(token: string, spreadsheetId: string, sheetName: string) {
-  await updateValues(token, spreadsheetId, sheetName, "A1:AI1", [HEADERS]);
+  await updateValues(token, spreadsheetId, sheetName, "A1:AL1", [HEADERS]);
 }
 
 async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string) {
@@ -466,7 +473,7 @@ export async function syncLeadsToSheet(spreadsheetId: string, leads: Lead[], she
   const warnings: string[] = [];
 
   const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
-  await clearValues(token, spreadsheetId, sheetName, "A2:AI");
+  await clearValues(token, spreadsheetId, sheetName, "A2:AL");
 
   if (leads.length) {
     await appendValues(token, spreadsheetId, sheetName, "A2", leads.map(leadToRow));

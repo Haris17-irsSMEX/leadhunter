@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { getBestContactMethod, getContactabilityStatus, getContactPageUrl } from "@/lib/contactability";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
@@ -20,9 +21,12 @@ type ExportColumn = {
 const EXPORT_COLUMNS: ExportColumn[] = [
   { label: "Company Name", value: (lead) => cleanText(lead.company_name), width: 28 },
   { label: "Website", value: (lead) => cleanText(lead.website), width: 32, hyperlink: true },
+  { label: "Best Contact Method", value: (lead) => getBestContactMethod(lead), width: 22 },
+  { label: "Contactability", value: (lead) => getContactabilityStatus(lead), width: 18 },
   { label: "Email", value: (lead) => cleanSafePublicEmail(lead.email), width: 28 },
   { label: "Email Source", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : ""), width: 32, hyperlink: true },
   { label: "Email Confidence", value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : ""), width: 18 },
+  { label: "Contact Page URL", value: (lead) => cleanText(getContactPageUrl(lead)), width: 34, hyperlink: true },
   { label: "Phone", value: (lead) => cleanText(lead.phone), width: 18 },
   { label: "Location", value: (lead) => cleanText(lead.location), width: 32 },
   { label: "Country", value: (lead) => cleanText(lead.country), width: 18 },

@@ -1,8 +1,10 @@
+import { leadMatchesContactFilter, type ContactFilter } from "@/lib/contactability";
 import { isSafePublicEmail } from "@/lib/email-safety";
 import type { Lead } from "@/lib/types";
 
 export type LeadExportFilter =
   | "all"
+  | ContactFilter
   | "has_public_email"
   | "any_delivery_found"
   | "ubereats_found"
@@ -14,6 +16,12 @@ export type LeadExportFilter =
 
 export const LEAD_EXPORT_FILTERS: LeadExportFilter[] = [
   "all",
+  "contactable",
+  "email_found",
+  "contact_page_found",
+  "phone_found",
+  "no_public_email",
+  "not_contactable",
   "has_public_email",
   "any_delivery_found",
   "ubereats_found",
@@ -35,6 +43,17 @@ export function leadMatchesExportFilter(lead: Lead, filter: LeadExportFilter) {
 
   if (filter === "has_public_email") {
     return isSafePublicEmail(lead.email);
+  }
+
+  if (
+    filter === "contactable" ||
+    filter === "email_found" ||
+    filter === "contact_page_found" ||
+    filter === "phone_found" ||
+    filter === "no_public_email" ||
+    filter === "not_contactable"
+  ) {
+    return leadMatchesContactFilter(lead, filter);
   }
 
   if (filter === "ubereats_found") {
