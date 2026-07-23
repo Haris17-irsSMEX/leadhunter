@@ -6,7 +6,7 @@ import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload
 import JobStatusCard from "@/components/JobStatusCard";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
-import { isRestaurantLead, isRestaurantSearchText } from "@/lib/lead-kind";
+import { isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
@@ -361,8 +361,7 @@ export default function FinderPage() {
   const [communityError, setCommunityError] = useState("");
   const [communityResult, setCommunityResult] = useState<CommunityResult | null>(null);
   const mapsSearchLooksRestaurant = isRestaurantSearchText(`${mapsQuery} ${mapsLocation}`);
-  const showRestaurantPreview =
-    mapsRestaurantEnrichment && (mapsSearchLooksRestaurant || Boolean(mapsResult?.leads?.some((lead) => isRestaurantLead(lead))));
+  const showRestaurantPreview = mapsRestaurantEnrichment;
   const mapsResultHasNoEmails = Boolean(mapsResult?.leads.length) && Boolean(mapsResult?.leads.every((lead) => !cleanSafePublicEmail(lead.email)));
   const [communityAvailability, setCommunityAvailability] = useState({
     communities: true,

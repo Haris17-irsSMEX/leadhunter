@@ -3,7 +3,7 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
-import { findRestaurantPublicEmail } from "@/lib/restaurant-email";
+import { findPublicBusinessEmail } from "@/lib/restaurant-email";
 import type { Lead } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -57,12 +57,11 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: "This lead has no website to scan." }, { status: 400 });
     }
 
-    const emailResult = await findRestaurantPublicEmail(currentLead.website);
+    const emailResult = await findPublicBusinessEmail(currentLead.website);
     const safeEmail = cleanSafePublicEmail(emailResult.email);
     const currentEmailIsFake = Boolean(currentLead.email && !cleanSafePublicEmail(currentLead.email));
     const updatePayload: Record<string, unknown> = {
       raw_metadata: mergeRawMetadata(currentLead, emailResult.contactPageUrl, safeEmail ? "completed" : emailResult.status),
-      restaurant_enriched_at: new Date().toISOString(),
     };
 
     if (safeEmail) {

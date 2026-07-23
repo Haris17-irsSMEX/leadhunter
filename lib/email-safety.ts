@@ -3,6 +3,8 @@ const UUID_LIKE_REGEX = /[a-f0-9]{8}[-_]?[a-f0-9]{4}[-_]?[a-f0-9]{4}[-_]?[a-f0-9
 const ASSET_EXTENSION_REGEX = /\.(png|jpe?g|webp|gif|svg|css|js)(\b|[?#])/i;
 const IGNORED_EMAILS = new Set([
   "user@domain.com",
+  "your@email.com",
+  "example@example.com",
   "example@domain.com",
   "example@email.com",
   "email@example.com",

@@ -7,7 +7,6 @@ import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, S
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
-import { isRestaurantLead } from "@/lib/lead-kind";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
@@ -421,10 +420,13 @@ function contactPageUrl(lead: Lead) {
 }
 
 function hasDeliverySignal(lead: Lead) {
-  return deliveryPlatforms.some((platform) => {
-    const status = deliveryPlatformStatus(lead, platform.value);
-    return status === "found" || status === "unclear" || status === "error";
-  });
+  return (
+    Boolean(lead.restaurant_enrichment_status && lead.restaurant_enrichment_status !== "not_checked") ||
+    deliveryPlatforms.some((platform) => {
+      const status = deliveryPlatformStatus(lead, platform.value);
+      return Boolean(status && status !== "not_checked");
+    })
+  );
 }
 
 function PlatformSummaryBadges({ lead }: { lead: Lead }) {
@@ -461,7 +463,7 @@ function GeneralIntelligenceBadges({ lead }: { lead: Lead }) {
 }
 
 function IntelligenceBadges({ lead }: { lead: Lead }) {
-  if (isRestaurantLead(lead) || hasDeliverySignal(lead)) {
+  if (hasDeliverySignal(lead)) {
     return <PlatformSummaryBadges lead={lead} />;
   }
 
@@ -803,7 +805,7 @@ function ProfessionalLeadRow({
   const safeEmail = cleanSafePublicEmail(lead.email);
   const websiteLabel = displayDomain(lead.website) || "No website";
   const pageUrl = contactPageUrl(lead);
-  const showDeliveryIntelligence = isRestaurantLead(lead) || hasDeliverySignal(lead);
+  const showDeliveryIntelligence = hasDeliverySignal(lead);
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -850,6 +852,20 @@ function ProfessionalLeadRow({
           <div className="space-y-2">
             {safeEmail ? statusBadge("Email found", "found") : statusBadge("No public email", "not_found")}
             {safeEmail ? <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{safeEmail}</p> : null}
+            {!safeEmail && canFindEmail ? (
+              <button
+                type="button"
+                disabled={isEnriching}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEnrichEmail();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                Find email
+              </button>
+            ) : null}
           </div>
         </td>
         <td className="px-4 py-5 align-top">
@@ -951,6 +967,12 @@ function ProfessionalLeadRow({
                     <div className="flex flex-wrap gap-2">
                       <SmartLink href={lead.website} label="Open website" />
                       <SmartLink href={pageUrl} label="Open contact page" />
+                      {!safeEmail && canFindEmail ? (
+                        <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60">
+                          {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                          Find email
+                        </button>
+                      ) : null}
                       {safeEmail ? (
                         <button type="button" onClick={onCopyEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-white/[0.06]">
                           <Copy className="h-3.5 w-3.5" />
