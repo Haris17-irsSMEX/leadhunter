@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload } from "lucide-react";
 import JobStatusCard from "@/components/JobStatusCard";
+import MonthlyLimitNotice from "@/components/MonthlyLimitNotice";
 import { getContactPageUrl } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
+import type { UsageSummary } from "@/lib/usage";
 import { useToast } from "@/lib/useToast";
 
 type FinderTab = "website-batch" | "google-maps" | "directories" | "communities";
@@ -29,6 +31,25 @@ type HackerNewsMode = "show_hn" | "ask_hn" | "jobs" | "who_is_hiring";
 type RedditMode = "subreddit" | "search";
 type IndieHackersMode = "products";
 type ProductHuntMode = "front_page";
+type ApiFailurePayload = {
+  code?: string;
+  error?: string;
+  message?: string;
+  usage?: UsageSummary;
+};
+
+class MonthlyLimitUiError extends Error {
+  constructor(readonly usage: UsageSummary) {
+    super("Monthly lead limit reached");
+    this.name = "MonthlyLimitUiError";
+  }
+}
+
+function throwIfMonthlyLimit(payload: ApiFailurePayload) {
+  if (payload.code === "MONTHLY_LIMIT_REACHED" && payload.usage) {
+    throw new MonthlyLimitUiError(payload.usage);
+  }
+}
 
 type BatchResult = {
   job_id: string;
@@ -380,6 +401,8 @@ export default function FinderPage() {
   const [communityLoading, setCommunityLoading] = useState(false);
   const [communityError, setCommunityError] = useState("");
   const [communityResult, setCommunityResult] = useState<CommunityResult | null>(null);
+  const [monthlyLimitUsage, setMonthlyLimitUsage] = useState<UsageSummary | null>(null);
+  const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
   const mapsSearchLooksRestaurant = isRestaurantSearchText(`${mapsQuery} ${mapsLocation}`);
   const showRestaurantPreview = mapsRestaurantEnrichment;
   const mapsResultHasNoEmails = Boolean(mapsResult?.leads.length) && Boolean(mapsResult?.leads.every((lead) => !cleanSafePublicEmail(lead.email)));
@@ -511,6 +534,24 @@ export default function FinderPage() {
     return payload.error ?? payload.message ?? "Unable to scrape communities.";
   }
 
+  function handleFinderRequestError(
+    error: unknown,
+    fallback: string,
+    setLocalError: (message: string) => void,
+  ) {
+    if (error instanceof MonthlyLimitUiError) {
+      setMonthlyLimitUsage(error.usage);
+      setLocalError("");
+      showToast("Monthly lead limit reached. No additional leads were added.", "warning");
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : fallback;
+    console.error(error);
+    setLocalError(message);
+    showToast(message, "error");
+  }
+
   function toJobStatus(result: BatchResult, urlCount: number) {
     return {
       id: result.job_id,
@@ -577,18 +618,17 @@ export default function FinderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: singleUrl.trim() }),
       });
-      const data = (await response.json()) as Lead & { error?: string };
+      const data = (await response.json()) as Lead & ApiFailurePayload;
 
       if (!response.ok) {
+        throwIfMonthlyLimit(data);
         throw new Error(getApiErrorMessage(response, data.error ?? "Unable to scrape website."));
       }
 
       setSingleLead(data);
       showToast("Lead scraped successfully.", "success");
     } catch (error) {
-      console.error(error);
-      showToast(error instanceof Error ? error.message : "Unable to scrape website.", "error");
-      setSingleError(error instanceof Error ? error.message : "Unable to scrape website.");
+      handleFinderRequestError(error, "Unable to scrape website.", setSingleError);
     } finally {
       setSingleLoading(false);
     }
@@ -605,18 +645,17 @@ export default function FinderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ urls: bulkUrls }),
       });
-      const data = (await response.json()) as BatchResult & { error?: string };
+      const data = (await response.json()) as BatchResult & ApiFailurePayload;
 
       if (!response.ok) {
+        throwIfMonthlyLimit(data);
         throw new Error(getApiErrorMessage(response, data.error ?? "Unable to run batch scrape."));
       }
 
       setBatchResult(data);
       showToast(`Batch scrape complete. ${data.count} leads saved.`, "success");
     } catch (error) {
-      console.error(error);
-      showToast(error instanceof Error ? error.message : "Unable to run batch scrape.", "error");
-      setBatchError(error instanceof Error ? error.message : "Unable to run batch scrape.");
+      handleFinderRequestError(error, "Unable to run batch scrape.", setBatchError);
     } finally {
       setBatchLoading(false);
     }
@@ -641,9 +680,10 @@ export default function FinderPage() {
           deliveryFilter: mapsDeliveryFilter,
         }),
       });
-      const data = (await response.json()) as MapsResult & { error?: string };
+      const data = (await response.json()) as MapsResult & ApiFailurePayload;
 
       if (!response.ok) {
+        throwIfMonthlyLimit(data);
         throw new Error(getApiErrorMessage(response, data.error ?? "Unable to search Google Maps."));
       }
 
@@ -663,9 +703,7 @@ export default function FinderPage() {
         showToast("These Google Maps leads were already saved in your workspace.", "info");
       }
     } catch (error) {
-      console.error(error);
-      showToast(error instanceof Error ? error.message : "Unable to search Google Maps.", "error");
-      setMapsError(error instanceof Error ? error.message : "Unable to search Google Maps.");
+      handleFinderRequestError(error, "Unable to search Google Maps.", setMapsError);
     } finally {
       setMapsLoading(false);
     }
@@ -682,18 +720,17 @@ export default function FinderPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: directoryUrl.trim() }),
       });
-      const data = (await response.json()) as DirectoryResult & { error?: string };
+      const data = (await response.json()) as DirectoryResult & ApiFailurePayload;
 
       if (!response.ok) {
+        throwIfMonthlyLimit(data);
         throw new Error(getApiErrorMessage(response, data.error ?? "Unable to scrape directory."));
       }
 
       setDirectoryResult(data);
       showToast(`${data.count} directory leads scraped.`, "success");
     } catch (error) {
-      console.error(error);
-      showToast(error instanceof Error ? error.message : "Unable to scrape directory.", "error");
-      setDirectoryError(error instanceof Error ? error.message : "Unable to scrape directory.");
+      handleFinderRequestError(error, "Unable to scrape directory.", setDirectoryError);
     } finally {
       setDirectoryLoading(false);
     }
@@ -723,9 +760,10 @@ export default function FinderPage() {
           limit,
         }),
       });
-      const payload = (await response.json()) as CommunityResult & { error?: string; message?: string };
+      const payload = (await response.json()) as CommunityResult & ApiFailurePayload;
 
       if (!response.ok) {
+        throwIfMonthlyLimit(payload);
         throw new Error(getCommunityErrorMessage(response, payload));
       }
 
@@ -749,10 +787,7 @@ export default function FinderPage() {
         showToast("No new community leads found.", "error");
       }
     } catch (error) {
-      console.error(error);
-      const message = error instanceof Error ? error.message : "Unable to scrape communities.";
-      setCommunityError(message);
-      showToast(message, "error");
+      handleFinderRequestError(error, "Unable to scrape communities.", setCommunityError);
     } finally {
       setCommunityLoading(false);
     }
@@ -785,6 +820,8 @@ export default function FinderPage() {
           </p>
         </div>
       </header>
+
+      {monthlyLimitUsage ? <MonthlyLimitNotice usage={monthlyLimitUsage} supportEmail={supportEmail} /> : null}
 
       <section className="app-card">
         <div className="app-tabs w-full sm:w-auto" role="tablist" aria-label="Lead source">

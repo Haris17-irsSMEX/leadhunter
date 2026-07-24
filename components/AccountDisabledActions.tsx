@@ -2,9 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { LogOut } from "lucide-react";
+import { LifeBuoy, LogOut } from "lucide-react";
 
-export default function AccountDisabledActions() {
+export default function AccountDisabledActions({ supportEmail }: { supportEmail: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
@@ -16,9 +16,15 @@ export default function AccountDisabledActions() {
   }
 
   return (
-    <button type="button" className="btn-primary justify-center" disabled={loading} onClick={() => void signOut()}>
-      <LogOut className="h-4 w-4" />
-      {loading ? "Signing out..." : "Sign out and return to login"}
-    </button>
+    <>
+      <a href={`mailto:${supportEmail}?subject=LeadHunter%20Account%20Support`} className="btn-primary justify-center">
+        <LifeBuoy className="h-4 w-4" aria-hidden="true" />
+        Contact support
+      </a>
+      <button type="button" className="btn-secondary justify-center" disabled={loading} onClick={() => void signOut()}>
+        <LogOut className="h-4 w-4" aria-hidden="true" />
+        {loading ? "Signing out..." : "Sign out"}
+      </button>
+    </>
   );
 }

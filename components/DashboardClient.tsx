@@ -16,6 +16,7 @@ import {
   Clock3,
 } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
+import MonthlyLimitNotice from "@/components/MonthlyLimitNotice";
 import { useToast } from "@/lib/useToast";
 import type { Lead, ScrapeJob } from "@/lib/types";
 import type { UsageSummary } from "@/lib/usage";
@@ -194,6 +195,9 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
   const [quickLoading, setQuickLoading] = useState(false);
   const [quickLead, setQuickLead] = useState<Lead | null>(null);
   const [showSheetsModal, setShowSheetsModal] = useState(false);
+  const [monthlyLimitUsage, setMonthlyLimitUsage] = useState<UsageSummary | null>(
+    !initialUsage.isAdmin && initialUsage.remaining === 0 ? initialUsage : null,
+  );
   const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
 
   const stats = useMemo(() => {
@@ -206,8 +210,7 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
   const usagePercent = initialUsage.isAdmin
     ? 0
     : Math.min(100, Math.round((initialUsage.used / Math.max(initialUsage.limit, 1)) * 100));
-  const usageTone =
-    usagePercent >= 100 ? "bg-[var(--danger)]" : usagePercent >= 80 ? "bg-[var(--warning)]" : "bg-[var(--primary)]";
+  const usageTone = usagePercent >= 80 ? "bg-[var(--warning)]" : "bg-[var(--primary)]";
 
   async function handleQuickScrape() {
     setQuickLoading(true);
@@ -221,9 +224,19 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
         },
         body: JSON.stringify({ url: quickUrl.trim() }),
       });
-      const payload = (await response.json()) as Lead & { error?: string };
+      const payload = (await response.json()) as Lead & {
+        code?: string;
+        error?: string;
+        usage?: UsageSummary;
+      };
 
       if (!response.ok) {
+        if (payload.code === "MONTHLY_LIMIT_REACHED") {
+          setMonthlyLimitUsage(payload.usage ?? initialUsage);
+          showToast("Monthly lead limit reached. No additional leads were added.", "warning");
+          return;
+        }
+
         throw new Error(getApiErrorMessage(response, payload.error ?? "Unable to scrape website."));
       }
 
@@ -279,7 +292,7 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
           icon={MapPinned}
           tone={
             !initialUsage.isAdmin && initialUsage.remaining === 0
-              ? "bg-red-50 text-red-700"
+              ? "bg-amber-50 text-amber-700"
               : !initialUsage.isAdmin && usagePercent >= 80
                 ? "bg-amber-50 text-amber-700"
                 : "bg-green-50 text-green-700"
@@ -294,53 +307,47 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
         />
       </section>
 
-      <section
-        className={`app-card ${
-          !initialUsage.isAdmin && usagePercent >= 100
-            ? "border-[var(--danger-border)]"
-            : !initialUsage.isAdmin && usagePercent >= 80
-              ? "border-[var(--warning-border)]"
-              : ""
-        }`}
-      >
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-3">
-              <h2 className="app-section-title">Monthly usage</h2>
-              <span className="status-badge status-badge-info">{initialUsage.planLabel} plan</span>
-            </div>
-            <p className="mt-2 text-sm text-[var(--text-secondary)]">
-              {initialUsage.isAdmin
-                ? "Internal testing access is active."
-                : `${initialUsage.used.toLocaleString()} of ${initialUsage.limit.toLocaleString()} leads used. ${initialUsage.remaining.toLocaleString()} remaining.`}
-            </p>
-            {!initialUsage.isAdmin ? (
-              <div className="mt-4">
-                <div
-                  className="app-progress"
-                  role="progressbar"
-                  aria-label="Monthly lead usage"
-                  aria-valuemin={0}
-                  aria-valuemax={initialUsage.limit}
-                  aria-valuenow={initialUsage.used}
-                >
-                  <span className={usageTone} style={{ width: `${usagePercent}%` }} />
-                </div>
-                {usagePercent >= 100 ? (
-                  <p className="mt-3 text-sm font-semibold text-[var(--danger)]">Monthly lead limit reached</p>
-                ) : usagePercent >= 80 ? (
-                  <p className="mt-3 text-sm font-semibold text-[var(--warning)]">You are approaching your monthly allowance.</p>
-                ) : null}
+      {monthlyLimitUsage ? (
+        <MonthlyLimitNotice usage={monthlyLimitUsage} supportEmail={supportEmail} />
+      ) : (
+        <section className={`app-card ${!initialUsage.isAdmin && usagePercent >= 80 ? "border-[var(--warning-border)]" : ""}`}>
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="app-section-title">Monthly usage</h2>
+                <span className="status-badge status-badge-info">{initialUsage.planLabel} plan</span>
               </div>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                {initialUsage.isAdmin
+                  ? "Internal testing access is active."
+                  : `${initialUsage.used.toLocaleString()} of ${initialUsage.limit.toLocaleString()} leads used. ${initialUsage.remaining.toLocaleString()} remaining.`}
+              </p>
+              {!initialUsage.isAdmin ? (
+                <div className="mt-4">
+                  <div
+                    className="app-progress"
+                    role="progressbar"
+                    aria-label="Monthly lead usage"
+                    aria-valuemin={0}
+                    aria-valuemax={initialUsage.limit}
+                    aria-valuenow={initialUsage.used}
+                  >
+                    <span className={usageTone} style={{ width: `${usagePercent}%` }} />
+                  </div>
+                  {usagePercent >= 80 ? (
+                    <p className="mt-3 text-sm font-semibold text-[var(--warning)]">You are approaching your monthly allowance.</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {!initialUsage.isAdmin ? (
+              <a href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`} className="btn-secondary shrink-0">
+                Request plan upgrade
+              </a>
             ) : null}
           </div>
-          {!initialUsage.isAdmin ? (
-            <a href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`} className="btn-secondary shrink-0">
-              Request plan upgrade
-            </a>
-          ) : null}
-        </div>
-      </section>
+        </section>
+      )}
 
       {!totalLeads && !jobs.length ? (
         <section className="app-empty-state">
