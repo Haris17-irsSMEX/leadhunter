@@ -901,6 +901,7 @@ export default function LeadsTable() {
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
+  const leadsRequestIdRef = useRef(0);
   const [bulkEnrichProgress, setBulkEnrichProgress] = useState<{ current: number; total: number } | null>(null);
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
 
@@ -919,6 +920,7 @@ export default function LeadsTable() {
   }
 
   async function fetchLeads(targetPage: number) {
+    const requestId = ++leadsRequestIdRef.current;
     setLoading(true);
     setError("");
 
@@ -956,18 +958,28 @@ export default function LeadsTable() {
         throw new Error(getApiErrorMessage(response, payload.error ?? "Unable to load leads."));
       }
 
+      if (requestId !== leadsRequestIdRef.current) {
+        return;
+      }
+
       setLeads(payload.leads);
       setTotal(payload.total);
       setPage(targetPage);
       setSelectedIds([]);
       setExpandedLeadId(null);
     } catch (fetchError) {
+      if (requestId !== leadsRequestIdRef.current) {
+        return;
+      }
+
       const message = fetchError instanceof Error ? fetchError.message : "Unable to load leads.";
       console.error(fetchError);
       showToast(message, "error");
       setError(message);
     } finally {
-      setLoading(false);
+      if (requestId === leadsRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -1443,10 +1455,16 @@ export default function LeadsTable() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search company, email, or location"
+              aria-label="Search saved leads"
               className="app-input w-full pl-11"
             />
           </label>
-          <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)} className="app-input">
+          <select
+            value={sort}
+            onChange={(event) => setSort(event.target.value as SortOption)}
+            aria-label="Sort saved leads"
+            className="app-input"
+          >
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
             <option value="company">A-Z company name</option>

@@ -47,11 +47,13 @@ export default function IntegrationsPage() {
         </div>
 
         <div className="grid gap-6 p-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div>
+          <div className="min-w-0">
             <p className="app-label">Service account email</p>
-            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:flex-row sm:items-center sm:justify-between">
-              <code className="break-all text-sm text-green-700">{serviceAccountEmail}</code>
-              <CopyButton value={serviceAccountEmail} label="Copy email" />
+            <div className="mt-3 flex min-w-0 flex-col gap-3 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <code className="min-w-0 break-all text-sm text-green-700">{serviceAccountEmail}</code>
+              <div className="w-full shrink-0 sm:w-auto [&>button]:w-full">
+                <CopyButton value={serviceAccountEmail} label="Copy email" />
+              </div>
             </div>
 
             <h3 className="mt-8 app-section-title">Set up Google Sheets in four steps</h3>

@@ -325,11 +325,18 @@ export default function AdminConsole() {
                 <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[var(--text-muted)]" />
                 <input
                   id="admin-user-search"
-                  className="app-input w-full pl-10"
+                  className="app-input w-full pl-10 pr-12"
                   value={searchInput}
                   onChange={(event) => setSearchInput(event.target.value)}
                   placeholder="Search by email"
                 />
+                <button
+                  type="submit"
+                  className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-lg text-[var(--accent)] transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+                  aria-label="Search users"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
               </form>
               <label>
                 <span className="sr-only">Filter by plan</span>

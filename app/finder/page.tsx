@@ -1056,6 +1056,9 @@ export default function FinderPage() {
                     <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
                       Choose which delivery platforms to check using public search results.
                     </p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+                      Delivery-platform presence is based on public search signals and confidence scoring. It is not official verification.
+                    </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {[
                         { label: "USA platforms", value: "usa" as const },
