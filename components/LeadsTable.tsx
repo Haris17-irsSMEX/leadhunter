@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Trash2, Users } from "lucide-react";
@@ -48,6 +48,57 @@ type RestaurantEnrichmentFilter =
   | "ubereats_or_doordash_found"
   | "not_checked";
 type SortOption = "newest" | "oldest" | "company";
+type EmailEnrichmentPayload = Lead & {
+  contactPageUrl?: string;
+  error?: string;
+  message?: string;
+  success?: boolean;
+};
+type EmailSearchFeedback = {
+  message: string;
+  type: "success" | "info";
+};
+
+class EmailSearchResponseError extends Error {}
+
+function emailSearchFeedback(previousLead: Lead | undefined, payload: EmailEnrichmentPayload): EmailSearchFeedback {
+  const previousEmail = cleanSafePublicEmail(previousLead?.email);
+  const resultEmail = cleanSafePublicEmail(payload.email);
+
+  if (resultEmail) {
+    if (previousEmail && previousEmail.toLowerCase() === resultEmail.toLowerCase()) {
+      return {
+        message: "This lead already has a public email.",
+        type: "info",
+      };
+    }
+
+    return {
+      message: "Public email found and saved.",
+      type: "success",
+    };
+  }
+
+  const contactPageUrl = payload.contactPageUrl?.trim() || getContactPageUrl(payload);
+  if (contactPageUrl) {
+    return {
+      message: "No public email found. Contact page saved instead.",
+      type: "info",
+    };
+  }
+
+  if (payload.phone?.trim() || previousLead?.phone?.trim()) {
+    return {
+      message: "No public email or contact page found. Phone outreach is available.",
+      type: "info",
+    };
+  }
+
+  return {
+    message: "No public email or contact page was found.",
+    type: "info",
+  };
+}
 
 function toSourceFilter(value: string | null): SourceFilter {
   if (
@@ -660,7 +711,7 @@ function ProfessionalLeadRow({
                 className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                Find email
+                {isEnriching ? "Searching…" : "Find email"}
               </button>
             ) : null}
           </div>
@@ -690,8 +741,8 @@ function ProfessionalLeadRow({
                 disabled={isEnriching}
                 onClick={onEnrichEmail}
                 className="icon-button h-8 w-8 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`Find email for ${lead.company_name}`}
-                title="Search public contact and about pages when available."
+                aria-label={isEnriching ? `Searching for email for ${lead.company_name}` : `Find email for ${lead.company_name}`}
+                title={isEnriching ? "Searching public contact pages…" : "Search public contact and about pages when available."}
               >
                 {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               </button>
@@ -770,7 +821,7 @@ function ProfessionalLeadRow({
                       {!safeEmail && canFindEmail ? (
                         <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60">
                           {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                          Find email
+                          {isEnriching ? "Searching…" : "Find email"}
                         </button>
                       ) : null}
                       {safeEmail ? (
@@ -849,6 +900,7 @@ export default function LeadsTable() {
   const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
+  const enrichingLeadIdsRef = useRef(new Set<string>());
   const [bulkEnrichProgress, setBulkEnrichProgress] = useState<{ current: number; total: number } | null>(null);
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
 
@@ -1154,19 +1206,27 @@ export default function LeadsTable() {
   }
 
   async function enrichLead(id: string, options: { quiet?: boolean } = {}) {
+    if (enrichingLeadIdsRef.current.has(id)) {
+      return undefined;
+    }
+
+    enrichingLeadIdsRef.current.add(id);
     setEnrichingIds((current) => Array.from(new Set([...current, id])));
     setError("");
+    const previousLead = leads.find((lead) => lead.id === id);
 
     try {
       const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich-email`, { method: "POST" });
-      const payload = (await parseResponseSafely(response)) as unknown as Lead & {
-        error?: string;
-        message?: string;
-        success?: boolean;
-      };
+      const payload = (await parseResponseSafely(response)) as unknown as EmailEnrichmentPayload;
 
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(response, payload.error ?? "Unable to enrich lead."));
+        const apiMessage = getApiErrorMessage(
+          response,
+          payload.error ?? payload.message ?? "Email search could not be completed. Please try again.",
+        );
+        throw new EmailSearchResponseError(
+          response.status >= 500 ? "Email search could not be completed. Please try again." : apiMessage,
+        );
       }
 
       if (payload.id) {
@@ -1174,16 +1234,19 @@ export default function LeadsTable() {
       }
 
       if (!options.quiet) {
-        const enrichedEmail = cleanSafePublicEmail(payload.email);
-        if (enrichedEmail) {
-          showToast("Email found and saved.", "success");
-        } else {
-          setCopyMessage(payload.message ?? "No public email found. Try the website contact form or phone.");
-        }
+        const feedback = emailSearchFeedback(previousLead, payload);
+        showToast(feedback.message, feedback.type);
       }
 
       return payload;
+    } catch (error) {
+      if (error instanceof EmailSearchResponseError) {
+        throw error;
+      }
+
+      throw new Error("Email search could not be completed. Please try again.");
     } finally {
+      enrichingLeadIdsRef.current.delete(id);
       setEnrichingIds((current) => current.filter((item) => item !== id));
     }
   }
