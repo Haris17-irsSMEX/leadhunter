@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorResponse } from "@/lib/api-errors";
+import { apiErrorResponse, PublicApiError } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient, withScrapedAt } from "@/lib/db";
 import { checkDeliveryPlatforms, DELIVERY_PLATFORM_IDS } from "@/lib/delivery-platforms";
 import { findRestaurantPublicEmail } from "@/lib/restaurant-email";
-import { scrapeGoogleMaps } from "@/lib/sgai";
+import { GooglePlacesProviderError, scrapeGoogleMaps } from "@/lib/sgai";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import { getUsageSummary, MonthlyLimitError } from "@/lib/usage";
 
@@ -114,6 +114,46 @@ function restaurantEnrichmentMaxPerRequest() {
 function restaurantEnrichmentConcurrency() {
   const configured = Number(process.env.RESTAURANT_ENRICHMENT_CONCURRENCY ?? 2);
   return Number.isFinite(configured) ? Math.min(Math.max(Math.floor(configured), 1), 5) : 2;
+}
+
+function publicGooglePlacesError(error: GooglePlacesProviderError) {
+  const providerStatus = error.providerStatus?.toUpperCase();
+
+  if (error.httpStatus === 429 || providerStatus === "RESOURCE_EXHAUSTED") {
+    return new PublicApiError(
+      "Google Maps search is temporarily unavailable because the provider quota was reached. Please try again shortly.",
+      503,
+      "GOOGLE_MAPS_PROVIDER_QUOTA",
+    );
+  }
+
+  if (
+    error.httpStatus === 401 ||
+    error.httpStatus === 403 ||
+    providerStatus === "PERMISSION_DENIED" ||
+    providerStatus === "UNAUTHENTICATED" ||
+    providerStatus === "MISSING_API_KEY"
+  ) {
+    return new PublicApiError(
+      "Google Maps search is temporarily unavailable due to a provider configuration issue.",
+      503,
+      "GOOGLE_MAPS_PROVIDER_CONFIGURATION",
+    );
+  }
+
+  if (providerStatus === "TIMEOUT") {
+    return new PublicApiError(
+      "Google Maps search timed out. Please try again shortly.",
+      504,
+      "GOOGLE_MAPS_PROVIDER_TIMEOUT",
+    );
+  }
+
+  return new PublicApiError(
+    "Google Maps search is temporarily unavailable. Please try again shortly.",
+    502,
+    "GOOGLE_MAPS_PROVIDER_FAILURE",
+  );
 }
 
 function normalizeText(value?: string) {
@@ -554,11 +594,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Both query and location are required." }, { status: 400 });
     }
 
-    const scrapedLeads = (await scrapeGoogleMaps(query, location, numResults)).filter((lead) => matchesWebsiteFilter(lead, filter));
+    const providerLeads = await scrapeGoogleMaps(query, location, numResults);
+    const scrapedLeads = providerLeads.filter((lead) => matchesWebsiteFilter(lead, filter));
+
+    console.info("[google-maps] search results", {
+      query: `${query} in ${location}`,
+      requested: numResults,
+      providerResultCount: providerLeads.length,
+      filteredResultCount: scrapedLeads.length,
+      websiteFilter: filter,
+    });
+
     let leads = scrapedLeads;
     let enrichmentResult: EnrichmentResult | null = null;
 
-    if (shouldEnrichRestaurants) {
+    if (shouldEnrichRestaurants && scrapedLeads.length > 0) {
       const hasStorage = await supportsRestaurantEnrichmentStorage();
 
       if (hasStorage) {
@@ -580,15 +630,22 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
+      outcome: providerLeads.length > 0 ? "success" : "zero_results",
       requested: numResults,
+      providerCount: providerLeads.length,
       count: leads.length,
       inserted: saved.inserted.length,
+      updated: saved.leads.filter((lead) => lead.scrape_status === "updated").length,
       skippedDuplicates: saved.skippedDuplicates,
       leads: saved.leads,
       usage: saved.usage,
       warnings: [...new Set([...warnings, ...saved.warnings])],
     });
   } catch (error) {
+    if (error instanceof GooglePlacesProviderError) {
+      return apiErrorResponse(publicGooglePlacesError(error), "Google Maps scrape failed.");
+    }
+
     return apiErrorResponse(error, "Google Maps scrape failed.");
   }
 }

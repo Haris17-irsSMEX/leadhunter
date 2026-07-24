@@ -157,138 +157,267 @@ export async function scrapeWebsite(url: string, prompt = WEBSITE_PROMPT): Promi
 
 const GOOGLE_PLACES_PAGE_SIZE = 20;
 const GOOGLE_PLACES_PAGE_DELAY_MS = 2000;
-const GOOGLE_PLACES_DETAIL_CONCURRENCY = 5;
+const GOOGLE_PLACES_REQUEST_TIMEOUT_MS = 15000;
+const GOOGLE_PLACES_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.nationalPhoneNumber",
+  "places.websiteUri",
+  "places.types",
+  "places.businessStatus",
+  "nextPageToken",
+].join(",");
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
-  const results: Array<PromiseSettledResult<R>> = new Array(items.length);
-  let nextIndex = 0;
+type GooglePlacesStage = "configuration" | "text_search";
 
-  async function worker() {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
+export class GooglePlacesProviderError extends Error {
+  constructor(
+    readonly stage: GooglePlacesStage,
+    readonly httpStatus: number,
+    readonly providerStatus?: string,
+    readonly providerMessage?: string,
+  ) {
+    super(providerMessage || "Google Places provider request failed.");
+    this.name = "GooglePlacesProviderError";
+  }
+}
 
-      try {
-        results[index] = { status: "fulfilled", value: await mapper(items[index] as T) };
-      } catch (reason) {
-        results[index] = { status: "rejected", reason };
-      }
-    }
+async function googlePlacesError(response: Response, stage: GooglePlacesStage) {
+  let providerStatus: string | undefined;
+  let providerMessage: string | undefined;
+
+  try {
+    const payload = (await response.json()) as {
+      error?: {
+        status?: string;
+        message?: string;
+      };
+    };
+    providerStatus = payload.error?.status;
+    providerMessage = payload.error?.message;
+  } catch {
+    // A non-JSON provider response is still a provider failure, never a valid empty search.
   }
 
-  await Promise.all(Array.from({ length: Math.min(Math.max(concurrency, 1), items.length) }, worker));
-  return results;
+  console.error("[google-places] provider request failed", {
+    stage,
+    httpStatus: response.status,
+    providerStatus: providerStatus ?? "UNKNOWN",
+    providerMessage: providerMessage ?? response.statusText ?? "Unknown provider error",
+  });
+
+  return new GooglePlacesProviderError(stage, response.status, providerStatus, providerMessage);
+}
+
+async function fetchGooglePlaces(url: string, init: RequestInit, stage: GooglePlacesStage) {
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: AbortSignal.timeout(GOOGLE_PLACES_REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      throw await googlePlacesError(response, stage);
+    }
+
+    return response;
+  } catch (error) {
+    if (error instanceof GooglePlacesProviderError) {
+      throw error;
+    }
+
+    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+    const providerStatus = timedOut ? "TIMEOUT" : "NETWORK_ERROR";
+    const providerMessage = timedOut
+      ? "Google Places request timed out."
+      : "Google Places could not be reached.";
+
+    console.error("[google-places] provider request failed", {
+      stage,
+      httpStatus: 0,
+      providerStatus,
+      providerMessage,
+    });
+
+    throw new GooglePlacesProviderError(stage, 0, providerStatus, providerMessage);
+  }
 }
 
 export async function scrapeGoogleMaps(query: string, location: string, numResults: number): Promise<Lead[]> {
-  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY?.trim();
+  const safeNumResults = Math.min(Math.max(Math.floor(numResults), 1), 50);
+  const searchQuery = `${query} in ${location}`;
+
+  console.info("[google-places] search started", {
+    apiKeyPresent: Boolean(apiKey),
+    query: searchQuery,
+    requested: safeNumResults,
+  });
+
   if (!apiKey) {
-    throw new Error("GOOGLE_PLACES_API_KEY is not configured.");
+    throw new GooglePlacesProviderError(
+      "configuration",
+      0,
+      "MISSING_API_KEY",
+      "GOOGLE_PLACES_API_KEY is not configured.",
+    );
   }
 
-  const safeNumResults = Math.min(Math.max(Math.floor(numResults), 1), 50);
   const sourceUrl = `maps:${query} ${location}`;
-  const places: Array<{ id: string }> = [];
+  const places: Array<{
+    id?: string;
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    nationalPhoneNumber?: string;
+    websiteUri?: string;
+    types?: string[];
+    businessStatus?: string;
+  }> = [];
   let pageToken: string | undefined;
+  const pageSize = Math.min(GOOGLE_PLACES_PAGE_SIZE, safeNumResults);
 
   while (places.length < safeNumResults) {
     if (pageToken) {
       await sleep(GOOGLE_PLACES_PAGE_DELAY_MS);
     }
 
-    const textSearchResponse = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    const textSearchResponse = await fetchGooglePlaces("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "places.id,nextPageToken",
+        "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
       },
       body: JSON.stringify({
-        textQuery: `${query} in ${location}`,
-        pageSize: Math.min(GOOGLE_PLACES_PAGE_SIZE, safeNumResults - places.length),
+        textQuery: searchQuery,
+        pageSize,
         ...(pageToken ? { pageToken } : {}),
       }),
-    });
+    }, "text_search");
 
-    if (!textSearchResponse.ok) {
-      throw new Error(`Google Places text search failed with status ${textSearchResponse.status}`);
-    }
-
-    const textSearchData = (await textSearchResponse.json()) as {
-      places?: Array<{ id?: string }>;
+    let textSearchData: {
+      places?: Array<{
+        id?: string;
+        displayName?: { text?: string };
+        formattedAddress?: string;
+        nationalPhoneNumber?: string;
+        websiteUri?: string;
+        types?: string[];
+        businessStatus?: string;
+      }>;
       nextPageToken?: string;
-      error?: { message?: string };
+      error?: {
+        status?: string;
+        message?: string;
+      };
     };
 
-    if (textSearchData.error?.message) {
-      throw new Error(textSearchData.error.message);
+    try {
+      textSearchData = (await textSearchResponse.json()) as typeof textSearchData;
+    } catch {
+      console.error("[google-places] provider request failed", {
+        stage: "text_search",
+        httpStatus: textSearchResponse.status,
+        providerStatus: "INVALID_RESPONSE",
+        providerMessage: "Google Places returned an unreadable response.",
+      });
+      throw new GooglePlacesProviderError(
+        "text_search",
+        textSearchResponse.status,
+        "INVALID_RESPONSE",
+        "Google Places returned an unreadable response.",
+      );
     }
 
-    const pagePlaces = (textSearchData.places ?? []).filter(
-      (place): place is { id: string } => typeof place.id === "string" && place.id.length > 0,
+    if (textSearchData.error?.message) {
+      throw new GooglePlacesProviderError(
+        "text_search",
+        textSearchResponse.status,
+        textSearchData.error.status,
+        textSearchData.error.message,
+      );
+    }
+
+    if (textSearchData.places !== undefined && !Array.isArray(textSearchData.places)) {
+      console.error("[google-places] provider request failed", {
+        stage: "text_search",
+        httpStatus: textSearchResponse.status,
+        providerStatus: "INVALID_RESPONSE",
+        providerMessage: "Google Places returned an unexpected result structure.",
+      });
+      throw new GooglePlacesProviderError(
+        "text_search",
+        textSearchResponse.status,
+        "INVALID_RESPONSE",
+        "Google Places returned an unexpected result structure.",
+      );
+    }
+
+    const rawPagePlaces = textSearchData.places ?? [];
+    const pagePlaces = rawPagePlaces.filter(
+      (place) =>
+        typeof place?.id === "string" &&
+        place.id.length > 0 &&
+        typeof place.displayName?.text === "string" &&
+        place.displayName.text.length > 0,
     );
+
+    if (rawPagePlaces.length > 0 && pagePlaces.length === 0) {
+      console.error("[google-places] provider request failed", {
+        stage: "text_search",
+        httpStatus: textSearchResponse.status,
+        providerStatus: "INVALID_RESPONSE",
+        providerMessage: "Google Places returned results without required business fields.",
+      });
+      throw new GooglePlacesProviderError(
+        "text_search",
+        textSearchResponse.status,
+        "INVALID_RESPONSE",
+        "Google Places returned results without required business fields.",
+      );
+    }
 
     places.push(...pagePlaces);
     pageToken = textSearchData.nextPageToken;
+
+    console.info("[google-places] text search response", {
+      query: searchQuery,
+      requested: safeNumResults,
+      httpStatus: textSearchResponse.status,
+      pageResultCount: pagePlaces.length,
+      accumulatedResultCount: Math.min(places.length, safeNumResults),
+      hasNextPage: Boolean(pageToken),
+    });
 
     if (!pageToken || !pagePlaces.length) {
       break;
     }
   }
 
-  const detailResults = await mapWithConcurrency(places.slice(0, safeNumResults), GOOGLE_PLACES_DETAIL_CONCURRENCY, async (place) => {
-    const detailsResponse = await fetch(`https://places.googleapis.com/v1/places/${place.id}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask":
-          "id,displayName,formattedAddress,nationalPhoneNumber,websiteUri,types,businessStatus",
-      },
-    });
-
-    if (!detailsResponse.ok) {
-      throw new Error(`Google Places details failed with status ${detailsResponse.status}`);
-    }
-
-    const detailsData = (await detailsResponse.json()) as {
-      id?: string;
-      displayName?: { text?: string };
-      formattedAddress?: string;
-      nationalPhoneNumber?: string;
-      websiteUri?: string;
-      types?: string[];
-      businessStatus?: string;
-      error?: { message?: string };
-    };
-
-    if (detailsData.error?.message) {
-      throw new Error(detailsData.error.message);
-    }
-
-    return {
-      company_name: detailsData.displayName?.text ?? "Unknown",
-      phone: detailsData.nationalPhoneNumber,
-      website: detailsData.websiteUri,
-      location: detailsData.formattedAddress,
-      industry: Array.isArray(detailsData.types) ? detailsData.types.join(", ") : undefined,
+  return places.slice(0, safeNumResults).map(
+    (place) =>
+      ({
+      company_name: place.displayName?.text ?? "Unknown",
+      phone: place.nationalPhoneNumber,
+      website: place.websiteUri,
+      location: place.formattedAddress,
+      industry: Array.isArray(place.types) ? place.types.join(", ") : undefined,
       source: "google_maps" as const,
-      source_external_id: detailsData.id,
+      source_external_id: place.id,
       source_url: sourceUrl,
       raw_metadata: {
-        google_place_id: detailsData.id,
-        business_status: detailsData.businessStatus,
-        types: detailsData.types,
+        google_place_id: place.id,
+        business_status: place.businessStatus,
+        types: place.types,
       },
       scraped_at: new Date().toISOString(),
-    } satisfies Lead;
-  });
-
-  return detailResults.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+      }) satisfies Lead,
+  );
 }
 
 export async function scrapeDirectory(url: string): Promise<Lead[]> {

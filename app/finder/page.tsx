@@ -38,9 +38,12 @@ type BatchResult = {
 };
 
 type MapsResult = {
+  outcome?: "success" | "zero_results";
   requested?: number;
+  providerCount?: number;
   count: number;
   inserted: number;
+  updated?: number;
   skippedDuplicates: number;
   leads: Lead[];
   warnings?: string[];
@@ -645,7 +648,20 @@ export default function FinderPage() {
       }
 
       setMapsResult(data);
-      showToast(`Saved ${data.inserted ?? data.count} new Google Maps leads.`, "success");
+      const inserted = data.inserted ?? data.count;
+      const updated = data.updated ?? 0;
+
+      if (data.outcome === "zero_results" || (data.providerCount ?? data.count) === 0) {
+        showToast("No businesses were found for this search.", "info");
+      } else if (data.count === 0) {
+        showToast("No businesses matched the selected filters.", "info");
+      } else if (inserted > 0 || updated > 0) {
+        const savedLabel = inserted > 0 ? `${inserted} new lead${inserted === 1 ? "" : "s"} saved` : "";
+        const updatedLabel = updated > 0 ? `${updated} lead${updated === 1 ? "" : "s"} updated` : "";
+        showToast([savedLabel, updatedLabel].filter(Boolean).join(" and ") + ".", "success");
+      } else {
+        showToast("These Google Maps leads were already saved in your workspace.", "info");
+      }
     } catch (error) {
       console.error(error);
       showToast(error instanceof Error ? error.message : "Unable to search Google Maps.", "error");

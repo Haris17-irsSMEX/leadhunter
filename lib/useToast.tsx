@@ -1,9 +1,9 @@
 "use client";
 
-import { CheckCircle2, CircleAlert, X } from "lucide-react";
+import { CheckCircle2, CircleAlert, Info, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-type ToastType = "success" | "error";
+type ToastType = "success" | "error" | "info";
 
 type ToastState = {
   message: string;
@@ -72,11 +72,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             className={`flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm font-medium shadow-[var(--shadow-elevated)] ${
               toast.type === "success"
                 ? "border-[var(--success-border)] bg-[var(--success-soft)] text-green-800"
-                : "border-[var(--danger-border)] bg-[var(--danger-soft)] text-red-800"
+                : toast.type === "info"
+                  ? "border-blue-200 bg-blue-50 text-blue-900"
+                  : "border-[var(--danger-border)] bg-[var(--danger-soft)] text-red-800"
             }`}
           >
             {toast.type === "success" ? (
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--success)]" aria-hidden="true" />
+            ) : toast.type === "info" ? (
+              <Info className="mt-0.5 h-5 w-5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
             ) : (
               <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-[var(--danger)]" aria-hidden="true" />
             )}
