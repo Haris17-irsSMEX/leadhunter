@@ -662,6 +662,11 @@ export default function FinderPage() {
   }
 
   async function handleMapsScrape() {
+    if (monthlyLimitUsage && monthlyLimitUsage.remaining <= 0) {
+      showToast("Monthly lead limit reached. No additional leads were added.", "warning");
+      return;
+    }
+
     setMapsLoading(true);
     setMapsError("");
     setMapsResult(null);
@@ -1017,7 +1022,12 @@ export default function FinderPage() {
               </div>
               <button
                 type="button"
-                disabled={mapsLoading || !mapsQuery.trim() || !mapsLocation.trim()}
+                disabled={
+                  mapsLoading ||
+                  !mapsQuery.trim() ||
+                  !mapsLocation.trim() ||
+                  Boolean(monthlyLimitUsage && monthlyLimitUsage.remaining <= 0)
+                }
                 onClick={handleMapsScrape}
                 className="btn-primary h-11 justify-center disabled:cursor-not-allowed disabled:opacity-60 lg:mt-[29px]"
               >

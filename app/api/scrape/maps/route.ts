@@ -594,6 +594,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Both query and location are required." }, { status: 400 });
     }
 
+    const preflightUsage = await getUsageSummary(user);
+
+    if (!preflightUsage.isAdmin && preflightUsage.remaining <= 0) {
+      console.info("[google-maps] monthly limit guard", {
+        plan: preflightUsage.plan,
+        used: preflightUsage.used,
+        allowance: preflightUsage.limit,
+        providerInvocationStarted: false,
+      });
+      throw new MonthlyLimitError(preflightUsage);
+    }
+
+    console.info("[google-maps] provider invocation", {
+      plan: preflightUsage.plan,
+      used: preflightUsage.used,
+      allowance: preflightUsage.limit,
+      providerInvocationStarted: true,
+    });
+
     const providerLeads = await scrapeGoogleMaps(query, location, numResults);
     const scrapedLeads = providerLeads.filter((lead) => matchesWebsiteFilter(lead, filter));
 

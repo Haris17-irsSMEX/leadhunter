@@ -88,7 +88,7 @@ export class MonthlyLimitError extends Error {
   readonly status = 429;
 
   constructor(readonly usage: UsageSummary) {
-    super(`You have reached your ${usage.limit}-lead monthly ${usage.planLabel.toLowerCase()}-plan limit.`);
+    super("You have used your current monthly lead allowance.");
     this.name = "MonthlyLimitError";
   }
 }
