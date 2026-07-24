@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload } from "lucide-react";
 import JobStatusCard from "@/components/JobStatusCard";
+import { getContactPageUrl } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { isRestaurantSearchText } from "@/lib/lead-kind";
@@ -112,30 +113,30 @@ function scrapeStatusBadge(status?: Lead["scrape_status"]) {
   const normalized = status ?? "new";
   const config =
     normalized === "new"
-      ? { label: "New", className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-200" }
+      ? { label: "New", className: "status-badge-success" }
       : normalized === "updated"
-        ? { label: "Updated", className: "border-sky-400/30 bg-sky-400/10 text-sky-200" }
+        ? { label: "Updated", className: "status-badge-info" }
         : normalized === "skipped_duplicate"
-          ? { label: "Skipped duplicate", className: "border-amber-400/30 bg-amber-400/10 text-amber-200" }
-          : { label: "Already saved", className: "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]" };
+          ? { label: "Skipped duplicate", className: "status-badge-warning" }
+          : { label: "Already saved", className: "status-badge-muted" };
 
-  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${config.className}`}>{config.label}</span>;
+  return <span className={`status-badge ${config.className}`}>{config.label}</span>;
 }
 
 function statusBadge(label: string, status?: string) {
   const normalized = status ?? "not_checked";
   const className =
     normalized === "found" || normalized === "completed"
-      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      ? "status-badge-success"
       : normalized === "unclear" || normalized === "partial"
-        ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+        ? "status-badge-warning"
         : normalized === "error"
-          ? "border-rose-400/30 bg-rose-400/10 text-rose-200"
+          ? "status-badge-danger"
           : normalized === "not_found"
-            ? "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]"
-            : "border-white/10 bg-white/[0.03] text-[var(--text-muted)]";
+            ? "status-badge-muted"
+            : "status-badge-muted";
 
-  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${className}`}>{label}</span>;
+  return <span className={`status-badge ${className}`}>{label}</span>;
 }
 
 function restaurantEmailStatus(lead: Lead) {
@@ -154,7 +155,7 @@ function restaurantEmailStatus(lead: Lead) {
   }
 
   if (emailStatus === "not_found") {
-    return statusBadge("No public email", "not_found");
+    return statusBadge("No public email found", "not_found");
   }
 
   return statusBadge("Not checked", "not_checked");
@@ -198,20 +199,36 @@ function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
   return lead.delivery_justeat_menu_url;
 }
 
-function DeliveryPlatformCell({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
-  const status = deliveryPlatformStatus(lead, platform);
-  const menuUrl = deliveryPlatformMenuUrl(lead, platform);
-  const label = deliveryPlatformLabel(platform);
+function DeliveryPresenceSummary({
+  lead,
+  platforms,
+}: {
+  lead: Lead;
+  platforms: DeliveryPlatformId[];
+}) {
+  if (!platforms.length) {
+    return <span className="text-xs text-[var(--text-muted)]">No platforms selected</span>;
+  }
 
   return (
-    <div className="space-y-2">
-      {statusBadge(deliveryStatusLabelForLead(lead, platform), status)}
-      {status === "found" ? <p className="text-xs text-emerald-200">{label} presence found</p> : null}
-      {menuUrl ? (
-        <a href={menuUrl} target="_blank" rel="noreferrer" className="block text-xs text-[var(--accent)]">
-          Menu/listing URL
-        </a>
-      ) : null}
+    <div className="flex min-w-[240px] flex-wrap gap-2">
+      {platforms.map((platform) => {
+        const status = deliveryPlatformStatus(lead, platform);
+        const menuUrl = deliveryPlatformMenuUrl(lead, platform);
+        const label = deliveryPlatformLabel(platform);
+
+        return (
+          <span key={platform} className={status === "found" ? "" : "opacity-75"}>
+            {menuUrl && status === "found" ? (
+              <a href={menuUrl} target="_blank" rel="noopener noreferrer" className="status-badge status-badge-success hover:underline">
+                {label}
+              </a>
+            ) : (
+              statusBadge(`${label}: ${deliveryStatusLabelForLead(lead, platform)}`, status)
+            )}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -260,22 +277,22 @@ function sourceLabel(source: Lead["source"]) {
 
 function communitySourceBadgeClass(source: Lead["source"]) {
   if (source === "hackernews") {
-    return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+    return "status-badge-warning";
   }
 
   if (source === "reddit") {
-    return "border-orange-400/30 bg-orange-400/10 text-orange-200";
+    return "status-badge-warning";
   }
 
   if (source === "indiehackers") {
-    return "border-indigo-400/30 bg-indigo-400/10 text-indigo-200";
+    return "status-badge-info";
   }
 
   if (source === "producthunt") {
-    return "border-rose-400/30 bg-rose-400/10 text-rose-200";
+    return "status-badge-warning";
   }
 
-  return "border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]";
+  return "status-badge-info";
 }
 
 function formatLeadDate(value?: string) {
@@ -392,25 +409,29 @@ export default function FinderPage() {
     {
       key: "hackernews",
       label: "Hacker News",
-      helper: "Launches, discussions, and hiring intent",
+      helper: communityAvailability.communities && communityAvailability.hackernews
+        ? "Launches, discussions, and hiring intent"
+        : "Currently unavailable",
       disabled: !communityAvailability.communities || !communityAvailability.hackernews,
     },
     {
       key: "reddit",
       label: "Reddit",
-      helper: "Experimental public post search",
+      helper: communityAvailability.communities && communityAvailability.reddit
+        ? "Experimental public post search"
+        : "Reddit access is not enabled",
       disabled: !communityAvailability.communities || !communityAvailability.reddit,
     },
     {
       key: "indiehackers",
       label: "Indie Hackers",
-      helper: communityAvailability.indiehackers ? "Public product listings" : "Requires ScrapeGraphAI credits",
+      helper: communityAvailability.indiehackers ? "Public product listings" : "Requires provider configuration",
       disabled: !communityAvailability.communities || !communityAvailability.indiehackers,
     },
     {
       key: "producthunt",
       label: "Product Hunt",
-      helper: communityAvailability.producthunt ? "Experimental front-page launches" : "Requires ScrapeGraphAI credits",
+      helper: communityAvailability.producthunt ? "Experimental front-page launches" : "Requires provider configuration",
       disabled: !communityAvailability.communities || !communityAvailability.producthunt,
     },
   ];
@@ -454,7 +475,20 @@ export default function FinderPage() {
 
   function getCommunityErrorMessage(response: Response, payload: { error?: string; message?: string }) {
     if (response.status === 403 && payload.error === "Communities scraping is disabled.") {
-      return "Communities is disabled. Set COMMUNITIES_ENABLED=true in .env.local.";
+      return "Community search is currently unavailable.";
+    }
+
+    if (response.status === 403 && (payload.error?.includes("Reddit") || payload.message?.includes("Reddit"))) {
+      return "Reddit access is not enabled or is temporarily unavailable.";
+    }
+
+    if (
+      payload.error?.includes("SGAI") ||
+      payload.message?.includes("SGAI") ||
+      payload.error?.toLowerCase().includes("credits") ||
+      payload.message?.toLowerCase().includes("credits")
+    ) {
+      return "This community source requires provider configuration.";
     }
 
     if (response.status === 429) {
@@ -465,6 +499,10 @@ export default function FinderPage() {
       }
 
       return "Too many requests - wait 60 seconds before trying again";
+    }
+
+    if (response.status >= 500) {
+      return "This community source is temporarily unavailable. Please try again.";
     }
 
     return payload.error ?? payload.message ?? "Unable to scrape communities.";
@@ -721,21 +759,19 @@ export default function FinderPage() {
   }
 
   return (
-    <div className="space-y-6 text-slate-100">
-      <section className="app-card">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="app-label text-[var(--accent)]">Lead finder</p>
-            <h1 className="app-page-title mt-3">Scrape leads from websites, Maps, directories, and communities.</h1>
-            <p className="mt-3 max-w-3xl app-muted">
-              Run single-company lookups, queue large batches, or sweep a directory page. Every preview now includes AI lead scoring so you can triage results immediately.
-            </p>
-          </div>
+    <div className="space-y-6">
+      <header className="app-page-header">
+        <div className="app-page-header-copy">
+          <p className="app-label text-[var(--accent)]">Lead research workspace</p>
+          <h1 className="app-page-title mt-2">Find leads</h1>
+          <p className="mt-2 app-muted">
+            Search local businesses or supported communities and save organized leads to your workspace.
+          </p>
         </div>
-      </section>
+      </header>
 
       <section className="app-card">
-        <div className="flex flex-wrap gap-2">
+        <div className="app-tabs w-full sm:w-auto" role="tablist" aria-label="Lead source">
           {[
             { key: "website-batch" as const, label: "Website / Batch", icon: Globe },
             { key: "google-maps" as const, label: "Google Maps", icon: MapPin },
@@ -749,12 +785,9 @@ export default function FinderPage() {
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={[
-                  "inline-flex h-11 items-center gap-2 rounded-[10px] border px-4 text-sm font-medium transition",
-                  activeTab === tab.key
-                    ? "border-[var(--accent)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]"
-                    : "border-white/[0.08] bg-transparent text-[var(--text-secondary)] hover:bg-white/[0.03] hover:text-[var(--text-primary)]",
-                ].join(" ")}
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                className={`app-tab flex-1 gap-2 sm:flex-none ${activeTab === tab.key ? "app-tab-active" : ""}`}
               >
                 <Icon className="h-4 w-4" />
                 {tab.label}
@@ -764,19 +797,14 @@ export default function FinderPage() {
         </div>
 
         {activeTab === "website-batch" ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="mt-6 rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:p-6">
+            <div className="app-tabs">
               {(["single", "bulk"] as WebsiteMode[]).map((mode) => (
                 <button
                   key={mode}
                   type="button"
                   onClick={() => setWebsiteMode(mode)}
-                  className={[
-                    "rounded-[10px] border px-4 py-2 text-sm font-medium transition",
-                    websiteMode === mode
-                      ? "border-[var(--accent)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]"
-                      : "border-white/[0.08] bg-transparent text-[var(--text-secondary)] hover:bg-white/[0.03] hover:text-[var(--text-primary)]",
-                  ].join(" ")}
+                    className={`app-tab ${websiteMode === mode ? "app-tab-active" : ""}`}
                 >
                   {mode === "single" ? "Single" : "Bulk"}
                 </button>
@@ -803,10 +831,10 @@ export default function FinderPage() {
                   {singleLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                   Scrape Lead
                 </button>
-                {singleError ? <p className="text-sm text-rose-400">{singleError}</p> : null}
+                {singleError ? <div role="alert" className="app-alert app-alert-error">{singleError}</div> : null}
 
                 {singleLead ? (
-                  <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-5">
+                  <div className="rounded-2xl border border-[var(--border-default)] bg-white p-5">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <p className="app-label">Lead preview</p>
@@ -841,7 +869,7 @@ export default function FinderPage() {
                     value={bulkText}
                     onChange={(event) => setBulkText(event.target.value)}
                     placeholder={"Paste URLs here, one per line\nhttps://company1.com\nhttps://company2.com"}
-                    className="min-h-[140px] w-full rounded-[10px] border border-white/[0.08] bg-[var(--bg)] px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgba(124,92,252,0.3)]"
+                    className="min-h-[140px] w-full rounded-[13px] border border-[var(--border-strong)] bg-white px-4 py-3 text-sm text-[var(--text-primary)] outline-none transition placeholder:text-[var(--text-muted)] focus:border-[var(--accent)] focus:shadow-[0_0_0_4px_rgba(20,99,255,0.12)]"
                   />
                 </div>
                 <label className="btn-secondary cursor-pointer">
@@ -860,14 +888,14 @@ export default function FinderPage() {
                   Start Batch Scrape
                 </button>
                 {batchLoading ? (
-                  <div className="rounded-[10px] border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-4 py-3 text-sm text-[var(--accent)]">
+                  <div className="rounded-[10px] border border-blue-200 bg-[var(--primary-soft)] px-4 py-3 text-sm text-[var(--accent)]">
                     <div className="flex items-center gap-2 font-medium">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {`Scraping ${bulkUrls.length} URLs, this may take a minute...`}
                     </div>
                   </div>
                 ) : null}
-                {batchError ? <p className="text-sm text-rose-400">{batchError}</p> : null}
+                {batchError ? <div role="alert" className="app-alert app-alert-error">{batchError}</div> : null}
                 {batchResult ? <JobStatusCard jobId={batchResult.job_id} initialJob={toJobStatus(batchResult, bulkUrls.length)} /> : null}
               </div>
             )}
@@ -875,29 +903,38 @@ export default function FinderPage() {
         ) : null}
 
         {activeTab === "google-maps" ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6">
-            <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr_170px_190px_auto] lg:items-start">
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">What type of business?</label>
+          <div className="mt-6 space-y-5">
+            <section className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:p-6">
+              <div className="mb-5">
+                <p className="app-label text-[var(--accent)]">Search setup</p>
+                <h2 className="mt-1 app-section-title">Google Maps business search</h2>
+                <p className="mt-1 app-muted">Choose a niche, location, result count, and website status.</p>
+              </div>
+            <div className="grid gap-4 lg:grid-cols-[1.15fr_1fr_150px_190px_auto] lg:items-start">
+              <div className="app-filter-field">
+                <label className="app-label" htmlFor="maps-business-type">Business type or niche</label>
                 <input
+                  id="maps-business-type"
                   value={mapsQuery}
                   onChange={(event) => setMapsQuery(event.target.value)}
-                  placeholder="SaaS companies, dental clinics, law firms..."
+                  placeholder="e.g. dentists, roofers, restaurants"
                   className="app-input w-full"
                 />
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Location</label>
+              <div className="app-filter-field">
+                <label className="app-label" htmlFor="maps-location">City or location</label>
                 <input
+                  id="maps-location"
                   value={mapsLocation}
                   onChange={(event) => setMapsLocation(event.target.value)}
-                  placeholder="Austin Texas, London UK, Dubai UAE..."
+                  placeholder="e.g. Austin TX, London UK"
                   className="app-input w-full"
                 />
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">How many results</label>
+              <div className="app-filter-field">
+                <label className="app-label" htmlFor="maps-result-count">Number of results</label>
                 <input
+                  id="maps-result-count"
                   type="number"
                   min={1}
                   max={50}
@@ -909,9 +946,10 @@ export default function FinderPage() {
                   Google Maps can return up to 50 leads per search when enough results are available.
                 </p>
               </div>
-              <div>
-                <label className="mb-2 block text-sm font-medium text-[var(--text-primary)]">Website filter</label>
+              <div className="app-filter-field">
+                <label className="app-label" htmlFor="maps-website-filter">Website filter</label>
                 <select
+                  id="maps-website-filter"
                   value={mapsWebsiteFilter}
                   onChange={(event) => setMapsWebsiteFilter(event.target.value as WebsiteFilter)}
                   className="app-input h-11 w-full"
@@ -930,17 +968,18 @@ export default function FinderPage() {
                 onClick={handleMapsScrape}
                 className="btn-primary h-11 justify-center disabled:cursor-not-allowed disabled:opacity-60 lg:mt-[29px]"
               >
-                {mapsLoading ? <MapPin className="h-4 w-4 animate-bounce" /> : <Search className="h-4 w-4" />}
-                Search & Scrape
+                {mapsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                {mapsLoading ? "Searching..." : "Search Google Maps"}
               </button>
             </div>
+            </section>
 
-            <label className="mt-5 flex gap-3 rounded-xl border border-white/[0.08] bg-white/[0.03] p-4">
+            <label className="flex gap-3 rounded-2xl border border-[var(--border-default)] bg-white p-4 shadow-[var(--shadow-small)]">
               <input
                 type="checkbox"
                 checked={mapsRestaurantEnrichment}
                 onChange={(event) => toggleRestaurantEnrichment(event.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+                className="app-checkbox mt-0.5"
               />
               <span>
                 <span className="block text-sm font-medium text-[var(--text-primary)]">Restaurant enrichment</span>
@@ -951,13 +990,13 @@ export default function FinderPage() {
             </label>
 
             {mapsRestaurantEnrichment && !mapsSearchLooksRestaurant ? (
-              <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              <div className="app-alert app-alert-warning">
                 Restaurant enrichment is designed for restaurants and food businesses.
               </div>
             ) : null}
 
             {mapsRestaurantEnrichment ? (
-              <div className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
+              <div className="rounded-2xl border border-[var(--border-default)] bg-white p-4 shadow-[var(--shadow-small)]">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-[var(--text-primary)]">Delivery platforms</p>
@@ -988,7 +1027,7 @@ export default function FinderPage() {
                               type="checkbox"
                               checked={mapsDeliveryPlatforms.includes(platform.value)}
                               onChange={(event) => toggleDeliveryPlatform(platform.value, event.target.checked)}
-                              className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+                              className="app-checkbox"
                             />
                             {platform.label}
                           </label>
@@ -1016,69 +1055,73 @@ export default function FinderPage() {
               </div>
             ) : null}
 
-            {mapsError ? <p className="mt-4 text-sm text-rose-400">{mapsError}</p> : null}
+            {mapsLoading ? (
+              <div className="app-alert app-alert-info">
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[var(--accent)]" aria-hidden="true" />
+                <div>
+                  <p className="font-semibold">Searching public business sources...</p>
+                  <p className="text-xs">Organizing results and avoiding duplicate leads. This can take a moment.</p>
+                </div>
+              </div>
+            ) : null}
+
+            {mapsError ? <div role="alert" className="app-alert app-alert-error">{mapsError}</div> : null}
 
             {mapsResult ? (
-              <div className="mt-6 space-y-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span className="badge-hot">
-                    {`Requested ${mapsResult.requested ?? mapsCount}. Found ${mapsResult.count}. Saved ${mapsResult.inserted ?? mapsResult.count} new leads. ${mapsResult.skippedDuplicates ?? 0} were already in your workspace.`}
-                  </span>
-                  {mapsResult.inserted === 0 && mapsResult.skippedDuplicates > 0 ? (
-                    <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs font-medium text-amber-100">
-                      Repeated search: no duplicates created
-                    </span>
-                  ) : null}
-                  <Link href="/leads" className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110">
-                    {"View all in My Leads ->"}
+              <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4 shadow-[var(--shadow-card)] sm:p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <p className="app-label text-[var(--accent)]">Search results</p>
+                    <h3 className="mt-1 app-section-title">Google Maps summary</h3>
+                    <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                      Requested {mapsResult.requested ?? mapsCount} · Found {mapsResult.count} · Saved {mapsResult.inserted ?? mapsResult.count} new · {mapsResult.skippedDuplicates ?? 0} already in workspace
+                    </p>
+                  </div>
+                  <Link href="/leads" className="btn-secondary">
+                    View in My Leads
                   </Link>
                 </div>
 
                 {mapsResult.warnings?.length ? (
-                  <div className="rounded-[10px] border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-                    {mapsResult.warnings.map((warning) => (
-                      <p key={warning}>{warning}</p>
-                    ))}
+                  <div className="app-alert app-alert-warning mt-5">
+                    <div>
+                      {mapsResult.warnings.map((warning) => (
+                        <p key={warning}>{warning}</p>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 
                 {mapsResultHasNoEmails ? (
-                  <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-[var(--text-secondary)]">
+                  <div className="app-alert app-alert-info mt-5">
                     Leads saved. No public emails were found yet. Try Find email, use phone outreach, or open the contact page.
                   </div>
                 ) : null}
 
                 {mapsResult.leads.length ? (
-                  <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
+                  <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border-default)] bg-white">
                   <div className="overflow-x-auto">
-                    <table className={showRestaurantPreview ? "min-w-[1240px] text-left text-sm" : "min-w-[980px] text-left text-sm"}>
-                      <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
+                    <table className={showRestaurantPreview ? "min-w-[980px] text-left text-sm" : "min-w-[1040px] text-left text-sm"}>
+                      <thead className="bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
                         <tr>
-                          <th className="px-4 py-3 font-medium">Name</th>
-                          {!showRestaurantPreview ? <th className="px-4 py-3 font-medium">Website</th> : null}
-                          <th className="px-4 py-3 font-medium">Email</th>
+                          <th className="px-4 py-3 font-semibold">{showRestaurantPreview ? "Restaurant" : "Business"}</th>
+                          {!showRestaurantPreview ? <th className="px-4 py-3 font-semibold">Website</th> : null}
+                          <th className="px-4 py-3 font-semibold">Public email</th>
                           {showRestaurantPreview ? (
-                            <>
-                              <th className="px-4 py-3 font-medium">Uber Eats</th>
-                              <th className="px-4 py-3 font-medium">DoorDash</th>
-                              <th className="px-4 py-3 font-medium">Grubhub</th>
-                              <th className="px-4 py-3 font-medium">Deliveroo</th>
-                              <th className="px-4 py-3 font-medium">Just Eat</th>
-                            </>
+                            <th className="px-4 py-3 font-semibold">Delivery presence</th>
                           ) : null}
-                          <th className="px-4 py-3 font-medium">Status</th>
-                          <th className="px-4 py-3 font-medium">Location</th>
-                          <th className="px-4 py-3 font-medium">Phone</th>
-                          <th className="px-4 py-3 font-medium">Industry</th>
+                          <th className="px-4 py-3 font-semibold">Phone</th>
+                          <th className="px-4 py-3 font-semibold">Location</th>
+                          {!showRestaurantPreview ? <th className="px-4 py-3 font-semibold">Industry</th> : null}
+                          <th className="px-4 py-3 font-semibold">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-white/10">
+                      <tbody className="divide-y divide-[var(--border-default)]">
                         {mapsResult.leads.map((lead, index) => (
                           <tr key={`${lead.company_name}-${lead.source_url}-${index}`}>
                             <td className="px-4 py-4">
                               <div className="flex flex-wrap items-center gap-3">
                                 <span className="font-medium text-[var(--text-primary)]">{lead.company_name}</span>
-                                {resultBadge(lead)}
                                 {scrapeStatusBadge(lead.scrape_status)}
                               </div>
                               <p className="mt-2 text-xs text-[var(--text-secondary)]">{lead.website?.trim() || "No website"}</p>
@@ -1091,39 +1134,37 @@ export default function FinderPage() {
                                 {restaurantEmailStatus(lead)}
                                 {cleanSafePublicEmail(lead.email) ? <p className="text-xs text-[var(--text-secondary)]">{cleanSafePublicEmail(lead.email)}</p> : null}
                                 {cleanSafePublicEmail(lead.email) && lead.email_source_url ? (
-                                  <a href={lead.email_source_url} target="_blank" rel="noreferrer" className="block text-xs text-[var(--accent)]">
+                                  <a href={lead.email_source_url} target="_blank" rel="noopener noreferrer" className="block text-xs text-[var(--accent)]">
                                     Email source
+                                  </a>
+                                ) : null}
+                                {!cleanSafePublicEmail(lead.email) && getContactPageUrl(lead) ? (
+                                  <a
+                                    href={getContactPageUrl(lead) ?? undefined}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block text-xs font-semibold text-[var(--accent)]"
+                                  >
+                                    Contact page found
                                   </a>
                                 ) : null}
                               </div>
                             </td>
                             {showRestaurantPreview ? (
-                              <>
-                                <td className="px-4 py-4">
-                                  <DeliveryPlatformCell lead={lead} platform="ubereats" />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <DeliveryPlatformCell lead={lead} platform="doordash" />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <DeliveryPlatformCell lead={lead} platform="grubhub" />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <DeliveryPlatformCell lead={lead} platform="deliveroo" />
-                                </td>
-                                <td className="px-4 py-4">
-                                  <DeliveryPlatformCell lead={lead} platform="justeat" />
-                                </td>
-                              </>
+                              <td className="px-4 py-4">
+                                <DeliveryPresenceSummary lead={lead} platforms={mapsDeliveryPlatforms} />
+                              </td>
+                            ) : null}
+                            <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.phone ?? "—"}</td>
+                            <td className="max-w-[260px] px-4 py-4 text-[var(--text-secondary)]">{lead.location ?? "—"}</td>
+                            {!showRestaurantPreview ? (
+                              <td className="max-w-[240px] px-4 py-4 text-[var(--text-secondary)]">{lead.industry ?? "—"}</td>
                             ) : null}
                             <td className="px-4 py-4">
                               {showRestaurantPreview
                                 ? statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)
                                 : scrapeStatusBadge(lead.scrape_status) ?? statusBadge("Saved", "found")}
                             </td>
-                            <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.location ?? "—"}</td>
-                            <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.phone ?? "—"}</td>
-                            <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.industry ?? "—"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1131,15 +1172,24 @@ export default function FinderPage() {
                   </div>
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--bg)] p-6 text-sm text-[var(--text-secondary)]">
-                    {mapsDeliveryFilter !== "all"
-                      ? "No restaurants matched the selected delivery-platform filter. Try another city, niche, or platform."
-                      : mapsWebsiteFilter === "no_website"
-                      ? "No no-website businesses found in this search. Try another niche, city, or All businesses."
-                      : "No Google Maps businesses found in this search. Try another niche, city, or website filter."}
+                  <div className="app-empty-state mt-5 min-h-0 py-10 shadow-none">
+                    <h3 className="font-bold text-[var(--text-primary)]">
+                      {mapsDeliveryFilter !== "all"
+                        ? "No restaurant matches"
+                        : mapsWebsiteFilter === "no_website"
+                          ? "No no-website businesses found"
+                          : "No businesses found"}
+                    </h3>
+                    <p className="mt-2 max-w-lg text-sm text-[var(--text-secondary)]">
+                      {mapsDeliveryFilter !== "all"
+                        ? "No restaurants matched the selected delivery-platform filter. Try another city, niche, or platform."
+                        : mapsWebsiteFilter === "no_website"
+                          ? "No no-website businesses found in this search. Try another niche, city, or All businesses."
+                          : "No Google Maps businesses found in this search. Try another niche, city, or website filter."}
+                    </p>
                   </div>
                 )}
-              </div>
+              </section>
             ) : null}
           </div>
         ) : null}
@@ -1162,7 +1212,7 @@ export default function FinderPage() {
                   key={chip.label}
                   type="button"
                   onClick={() => setDirectoryUrl(chip.value)}
-                  className="rounded-lg border border-white/[0.08] bg-transparent px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/[0.03] hover:text-[var(--text-primary)]"
+                  className="rounded-lg border border-[var(--border-default)] bg-white px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:border-blue-200 hover:bg-[var(--primary-soft)] hover:text-[var(--accent)]"
                 >
                   {chip.label}
                 </button>
@@ -1181,7 +1231,7 @@ export default function FinderPage() {
               </button>
             </div>
 
-            {directoryError ? <p className="mt-4 text-sm text-rose-400">{directoryError}</p> : null}
+            {directoryError ? <div role="alert" className="app-alert app-alert-error mt-4">{directoryError}</div> : null}
 
             {directoryResult ? (
               <div className="mt-6 space-y-4">
@@ -1214,8 +1264,8 @@ export default function FinderPage() {
               <p className="mt-2 max-w-2xl text-sm text-[var(--text-secondary)]">
                 Find people and companies showing real buying signals on Hacker News, Reddit, Indie Hackers, and Product Hunt.
               </p>
-              <div className="mt-4 rounded-lg border border-white/[0.08] bg-[rgba(255,255,255,0.03)] px-4 py-3 text-xs text-[var(--text-secondary)]">
-                Hacker News works without credits. Indie Hackers and Product Hunt require ScrapeGraphAI credits.
+              <div className="app-alert app-alert-info mt-4 text-xs">
+                Hacker News works without provider credits. Other community sources may require provider configuration.
               </div>
             </div>
 
@@ -1236,7 +1286,7 @@ export default function FinderPage() {
                         }
                       }}
                       className={`option-card flex h-full min-h-[112px] flex-col justify-between text-left ${
-                        isActive ? "border-[var(--accent)] bg-[rgba(124,92,252,0.16)]" : ""
+                        isActive ? "border-[var(--accent)] bg-[var(--primary-soft)]" : ""
                       } ${source.disabled ? "cursor-not-allowed opacity-55" : ""}`}
                     >
                       <span className="text-sm font-semibold text-[var(--text-primary)]">{source.label}</span>
@@ -1344,12 +1394,12 @@ export default function FinderPage() {
               </div>
 
               {communitySource === "reddit" ? (
-                <div className="mt-5 rounded-[10px] border border-orange-400/25 bg-orange-400/10 px-4 py-3 text-sm text-orange-100">
-                  Reddit is experimental. Public Reddit JSON may be blocked; OAuth will be added later for reliable access.
+                <div className="app-alert app-alert-warning mt-5">
+                  Reddit is experimental and may be unavailable until approved access is configured.
                 </div>
               ) : null}
 
-              {communityError ? <p className="mt-4 text-sm text-rose-400">{communityError}</p> : null}
+              {communityError ? <div role="alert" className="app-alert app-alert-error mt-4">{communityError}</div> : null}
             </div>
 
             {communityResult ? (
@@ -1368,17 +1418,19 @@ export default function FinderPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <span className="badge-hot">{communityResult.inserted} saved</span>
-                    <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs font-medium text-[var(--text-secondary)]">
-                      {communityResult.errors.length} errors
+                    <span className="status-badge status-badge-muted">
+                      {communityResult.errors.length} issues
                     </span>
                   </div>
                 </div>
 
                 {communityResult.errors.length > 0 ? (
-                  <div className="mt-5 rounded-[10px] border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                  <div className="app-alert app-alert-warning mt-5">
+                    <div>
                     {communityResult.errors.map((error) => (
                       <p key={error}>{error}</p>
                     ))}
+                    </div>
                   </div>
                 ) : null}
 
@@ -1386,7 +1438,7 @@ export default function FinderPage() {
                   <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
                     <div className="overflow-x-auto">
                       <table className="min-w-full text-left text-sm">
-                        <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
+                        <thead className="bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
                           <tr>
                             <th className="px-4 py-3 font-medium">Name</th>
                             <th className="px-4 py-3 font-medium">Status</th>
@@ -1398,14 +1450,14 @@ export default function FinderPage() {
                             <th className="px-4 py-3 font-medium">Link</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-white/10">
+                        <tbody className="divide-y divide-[var(--border-default)]">
                           {communityResult.leads.map((lead, index) => (
                             <tr key={`${lead.source}-${lead.source_external_id ?? lead.source_url ?? index}`}>
                               <td className="px-4 py-4 font-medium text-[var(--text-primary)]">{lead.company_name}</td>
                               <td className="px-4 py-4">{scrapeStatusBadge(lead.scrape_status)}</td>
                               <td className="whitespace-nowrap px-4 py-4">
                                 <span
-                                  className={`inline-flex whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium ${communitySourceBadgeClass(lead.source)}`}
+                                  className={`status-badge ${communitySourceBadgeClass(lead.source)}`}
                                 >
                                   {sourceLabel(lead.source)}
                                 </span>
@@ -1413,7 +1465,7 @@ export default function FinderPage() {
                               <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.signal_type ?? "-"}</td>
                               <td className="px-4 py-4">
                                 {typeof lead.intent_score === "number" ? (
-                                  <span className="rounded-full border border-[rgba(124,92,252,0.35)] bg-[rgba(124,92,252,0.14)] px-3 py-1 text-xs font-medium text-[var(--accent)]">
+                                  <span className="rounded-full border border-blue-200 bg-[var(--primary-soft)] px-3 py-1 text-xs font-medium text-[var(--accent)]">
                                     {lead.intent_score}/100
                                   </span>
                                 ) : (
@@ -1429,7 +1481,7 @@ export default function FinderPage() {
                                   <a
                                     href={lead.source_url}
                                     target="_blank"
-                                    rel="noreferrer"
+                                    rel="noopener noreferrer"
                                     className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110"
                                   >
                                     Open

@@ -30,6 +30,27 @@ async function parseResponseSafely(response: Response) {
   return { error: text.slice(0, 200) };
 }
 
+function syncErrorMessage(response: Response, payload: Record<string, unknown>) {
+  const rawMessage = String(payload.message ?? payload.error ?? "");
+  const normalized = rawMessage.toLowerCase();
+
+  if (normalized.includes("no leads match")) {
+    return "No leads match this sync filter.";
+  }
+
+  if (response.status === 403) {
+    return normalized.includes("disabled")
+      ? "Your account cannot sync leads right now. Contact support."
+      : "Google Sheets sync is not available for this account.";
+  }
+
+  if (response.status === 400 && normalized.includes("spreadsheet")) {
+    return "Check the spreadsheet ID, tab name, and sharing permission, then try again.";
+  }
+
+  return "Google Sheets could not be updated. Check the Sheet setup and try again.";
+}
+
 const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
   { label: "All visible leads", value: "all" },
   { label: "Contactable leads", value: "contactable" },
@@ -59,6 +80,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{ rowsWritten: number; url: string; warnings: string[] } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -66,7 +88,6 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
       setSyncFilter(defaultSyncFilter);
       setError("");
       setSuccess(null);
-      window.setTimeout(() => dialogRef.current?.focus(), 0);
     }
   }, [defaultSyncFilter, open, selectedIds.length]);
 
@@ -75,14 +96,45 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
       return undefined;
     }
 
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusTimer = window.setTimeout(() => dialogRef.current?.focus(), 0);
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
+        return;
+      }
+
+      if (event.key === "Tab" && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), a[href], summary, [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+      if (openerRef.current?.isConnected) {
+        openerRef.current.focus();
+      }
+    };
   }, [onClose, open]);
 
   if (!open) {
@@ -117,7 +169,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
       const payload = await parseResponseSafely(response);
 
       if (!response.ok) {
-        throw new Error(String(payload.error ?? payload.message ?? `Server error ${response.status}`));
+        throw new Error(syncErrorMessage(response, payload));
       }
 
       const rowsWritten = typeof payload.rowsWritten === "number" ? payload.rowsWritten : 0;
@@ -146,7 +198,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
         : `Sync ${Math.min(Math.max(recentCount, 1), 500)} recent leads`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 px-4 py-6" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-[var(--navy)]/35 px-4 py-6 backdrop-blur-sm" onMouseDown={onClose}>
       <div
         ref={dialogRef}
         role="dialog"
@@ -154,11 +206,11 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
         aria-labelledby="sheets-modal-title"
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
-        className="app-card my-auto max-h-[calc(100vh-3rem)] w-full max-w-2xl overflow-y-auto outline-none"
+        className="app-modal my-auto max-h-[calc(100vh-3rem)] max-w-2xl overflow-y-auto outline-none"
       >
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--primary-soft)] text-[var(--accent)]">
               <FileSpreadsheet className="h-4 w-4" />
             </span>
             <div>
@@ -172,27 +224,48 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
           </button>
         </div>
 
-        <div className="mt-6 space-y-4">
-          <details className="rounded-xl border border-violet-400/20 bg-violet-400/[0.06] p-4">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-white">
+        <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Google Sheets sync steps">
+          {["Share Sheet", "Sheet details", "Choose records", "Sync result"].map((step, index) => (
+            <div
+              key={step}
+              className={`rounded-xl border px-3 py-2 text-center text-xs font-semibold ${
+                success || (index < 3 && (spreadsheetId || index === 0))
+                  ? "border-blue-200 bg-[var(--primary-soft)] text-[var(--accent)]"
+                  : "border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-muted)]"
+              }`}
+            >
+              <span className="mr-1">{index + 1}.</span>
+              {step}
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
+            <p className="app-label">1. Share with the service account</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">Give Editor access to this email before syncing.</p>
+            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-[var(--border-default)] bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+              <code className="break-all text-xs text-green-700">{serviceAccountEmail}</code>
+              <CopyButton value={serviceAccountEmail} label="Copy email" />
+            </div>
+          </div>
+
+          <details className="rounded-xl border border-blue-200 bg-[var(--primary-soft)] p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-[var(--text-primary)]">
               <span className="flex items-center gap-2">
-                <Info className="h-4 w-4 text-violet-300" />
+                <Info className="h-4 w-4 text-[var(--accent)]" />
                 Google Sheets setup guide
               </span>
               <span className="text-xs font-normal text-[var(--accent)]">Open guide</span>
             </summary>
             <ol className="mt-4 space-y-3 text-sm leading-6 text-[var(--text-secondary)]">
-              <li>1. Share your spreadsheet with the LeadHunter service account as an Editor.</li>
-              <li className="flex flex-col gap-2 rounded-xl border border-white/10 bg-[var(--bg)] p-3 sm:flex-row sm:items-center sm:justify-between">
-                <code className="break-all text-xs text-emerald-200">{serviceAccountEmail}</code>
-                <CopyButton value={serviceAccountEmail} label="Copy email" />
-              </li>
-              <li>2. Copy the spreadsheet ID from the Google Sheets URL.</li>
-              <li>3. Paste the ID below and enter the destination tab name.</li>
+              <li>1. Create or open the destination Google Sheet.</li>
+              <li>2. Share it with the service-account email shown above as an Editor.</li>
+              <li>3. Copy the spreadsheet ID from the URL and enter the destination tab below.</li>
             </ol>
-            <div className="mt-4 overflow-x-auto rounded-xl border border-white/10 bg-[var(--bg)] p-3 font-mono text-xs text-[var(--text-muted)]">
+            <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--border-default)] bg-white p-3 font-mono text-xs text-[var(--text-muted)]">
               https://docs.google.com/spreadsheets/d/
-              <span className="rounded bg-[rgba(124,92,252,0.2)] px-1 py-0.5 text-violet-200">SPREADSHEET_ID</span>
+              <span className="rounded bg-blue-100 px-1 py-0.5 text-blue-700">SPREADSHEET_ID</span>
               /edit
             </div>
             <Link href="/integrations" className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[var(--accent)]">
@@ -202,7 +275,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
           </details>
 
           <label className="block">
-            <span className="app-label">Spreadsheet ID</span>
+            <span className="app-label">2. Spreadsheet ID</span>
             <input
               value={spreadsheetId}
               onChange={(event) => setSpreadsheetId(event.target.value)}
@@ -223,7 +296,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
           </label>
 
           <label className="block">
-            <span className="app-label">Sync filter</span>
+            <span className="app-label">3. Sync filter</span>
             <select value={syncFilter} onChange={(event) => setSyncFilter(event.target.value as LeadExportFilter)} className="app-input mt-2 w-full">
               {syncFilterOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -258,7 +331,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
             </button>
 
             {mode === "recent" ? (
-              <label className="block rounded-[10px] border border-white/10 bg-[var(--bg)] p-3">
+              <label className="block rounded-[10px] border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3">
                 <span className="app-label">How many recent leads?</span>
                 <input
                   type="number"
@@ -276,8 +349,8 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
               onClick={() => setMode("all")}
               className={
                 mode === "all"
-                  ? "rounded-[10px] border border-red-400/40 bg-red-500/[0.08] px-4 py-3 text-left text-red-200 transition"
-                  : "rounded-[10px] border border-red-400/20 bg-transparent px-4 py-3 text-left text-[var(--text-secondary)] transition hover:bg-red-500/[0.06]"
+                  ? "rounded-[10px] border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-3 text-left text-amber-800 transition"
+                  : "rounded-[10px] border border-[var(--border-default)] bg-white px-4 py-3 text-left text-[var(--text-secondary)] transition hover:border-[var(--warning-border)] hover:bg-[var(--warning-soft)]"
               }
             >
               <span className="block text-sm font-semibold">Replace the destination tab with all saved leads ({totalLeads} total)</span>
@@ -286,17 +359,22 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
           </div>
 
           {success ? (
-            <div className="rounded-[10px] border border-[rgba(52,211,153,0.28)] bg-[rgba(52,211,153,0.12)] px-4 py-3 text-sm text-[var(--success)]">
-              {success.rowsWritten} rows written.{" "}
-              <a href={success.url} target="_blank" rel="noreferrer" className="font-medium underline underline-offset-4">
-                Open Sheet
-              </a>
-              {success.warnings.length ? <span className="mt-2 block text-xs text-amber-200">{success.warnings.join(" ")}</span> : null}
+            <div className="app-alert app-alert-success">
+              <div>
+                <p className="font-semibold">{success.rowsWritten} leads synced successfully.</p>
+                {success.warnings.length ? <p className="mt-1 text-xs text-amber-800">{success.warnings.join(" ")}</p> : null}
+                {success.url ? (
+                  <a href={success.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 font-semibold text-green-800 underline underline-offset-4">
+                    Open Sheet
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
           {error ? (
-            <div className="rounded-[10px] border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.08)] px-4 py-3 text-sm text-red-300">
+            <div role="alert" className="app-alert app-alert-error">
               {error}
             </div>
           ) : null}
@@ -309,7 +387,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
               className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loadingMode ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {loadingMode ? "Working..." : submitLabel}
+              {loadingMode ? "Syncing leads to Google Sheets..." : submitLabel}
             </button>
             <button type="button" onClick={onClose} className="btn-secondary justify-center">
               Close

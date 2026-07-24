@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Ban,
@@ -71,15 +71,15 @@ const EMPTY_SUMMARY: Summary = {
 };
 
 const METRICS = [
-  { key: "totalUsers", label: "Total users", icon: Users, tone: "text-violet-200 bg-violet-400/10" },
-  { key: "activeUsers", label: "Active users", icon: CheckCircle2, tone: "text-emerald-200 bg-emerald-400/10" },
-  { key: "disabledUsers", label: "Disabled users", icon: Ban, tone: "text-rose-200 bg-rose-400/10" },
-  { key: "leadsThisMonth", label: "Leads this month", icon: Activity, tone: "text-cyan-200 bg-cyan-400/10" },
-  { key: "totalLeads", label: "Total leads", icon: Sparkles, tone: "text-amber-200 bg-amber-400/10" },
-  { key: "freeUsers", label: "Free users", icon: ShieldCheck, tone: "text-slate-200 bg-slate-400/10" },
-  { key: "starterUsers", label: "Starter users", icon: CircleDollarSign, tone: "text-blue-200 bg-blue-400/10" },
-  { key: "proUsers", label: "Pro users", icon: Crown, tone: "text-fuchsia-200 bg-fuchsia-400/10" },
-  { key: "agencyUsers", label: "Agency users", icon: BriefcaseBusiness, tone: "text-orange-200 bg-orange-400/10" },
+  { key: "totalUsers", label: "Total users", icon: Users, tone: "text-blue-700 bg-blue-50" },
+  { key: "activeUsers", label: "Active users", icon: CheckCircle2, tone: "text-green-700 bg-green-50" },
+  { key: "disabledUsers", label: "Disabled users", icon: Ban, tone: "text-red-700 bg-red-50" },
+  { key: "leadsThisMonth", label: "Leads this month", icon: Activity, tone: "text-cyan-700 bg-cyan-50" },
+  { key: "totalLeads", label: "Total leads", icon: Sparkles, tone: "text-amber-700 bg-amber-50" },
+  { key: "freeUsers", label: "Free users", icon: ShieldCheck, tone: "text-slate-700 bg-slate-100" },
+  { key: "starterUsers", label: "Starter users", icon: CircleDollarSign, tone: "text-blue-700 bg-blue-50" },
+  { key: "proUsers", label: "Pro users", icon: Crown, tone: "text-sky-700 bg-sky-50" },
+  { key: "agencyUsers", label: "Agency users", icon: BriefcaseBusiness, tone: "text-orange-700 bg-orange-50" },
 ] as const;
 
 function formatDate(value: string) {
@@ -90,10 +90,10 @@ function formatDate(value: string) {
 }
 
 function planTone(plan: PlanName) {
-  if (plan === "agency") return "border-orange-400/25 bg-orange-400/10 text-orange-100";
-  if (plan === "pro") return "border-fuchsia-400/25 bg-fuchsia-400/10 text-fuchsia-100";
-  if (plan === "starter") return "border-blue-400/25 bg-blue-400/10 text-blue-100";
-  return "border-slate-400/20 bg-slate-400/10 text-slate-200";
+  if (plan === "agency") return "border-orange-200 bg-orange-50 text-orange-700";
+  if (plan === "pro") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (plan === "starter") return "border-blue-200 bg-blue-50 text-blue-700";
+  return "border-slate-200 bg-slate-100 text-slate-700";
 }
 
 async function readApiError(response: Response, fallback: string) {
@@ -114,6 +114,9 @@ export default function AdminConsole() {
   const [detail, setDetail] = useState<UserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const detailDialogRef = useRef<HTMLElement>(null);
+  const detailOpenerRef = useRef<HTMLElement | null>(null);
+  const detailUserId = detail?.userId ?? null;
 
   async function loadSummary() {
     const response = await fetch("/api/admin/summary", { cache: "no-store" });
@@ -154,15 +157,46 @@ export default function AdminConsole() {
   }, [search, plan, status]);
 
   useEffect(() => {
-    if (!detail) return;
+    if (!detailUserId) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
     function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setDetail(null);
+      if (event.key === "Escape") {
+        setDetail(null);
+        return;
+      }
+
+      if (event.key === "Tab" && detailDialogRef.current) {
+        const focusable = Array.from(
+          detailDialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
     }
 
+    window.setTimeout(() => detailDialogRef.current?.focus(), 0);
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [detail]);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+      if (detailOpenerRef.current?.isConnected) {
+        detailOpenerRef.current.focus();
+      }
+    };
+  }, [detailUserId]);
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
@@ -170,6 +204,7 @@ export default function AdminConsole() {
   }
 
   async function openUser(userId: string) {
+    detailOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDetailLoading(true);
     setError("");
 
@@ -206,28 +241,55 @@ export default function AdminConsole() {
     }
   }
 
+  function confirmStatusChange(user: UserRow) {
+    const nextStatus = user.status === "active" ? "disabled" : "active";
+    const action = nextStatus === "disabled" ? "disable" : "enable";
+
+    if (!window.confirm(`Are you sure you want to ${action} ${user.email}?`)) {
+      return;
+    }
+
+    void updateUser(user.userId, { status: nextStatus });
+  }
+
+  function confirmDetailSave() {
+    if (!detail) {
+      return;
+    }
+
+    if (!window.confirm(`Save plan, account status, and admin-note changes for ${detail.email}?`)) {
+      return;
+    }
+
+    void updateUser(
+      detail.userId,
+      { plan: detail.plan, status: detail.status, admin_notes: detail.adminNotes },
+      true,
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <header className="app-card overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(124,92,252,0.16),transparent_42%),var(--card)]">
+      <header className="app-card overflow-hidden bg-[radial-gradient(circle_at_top_right,rgba(20,99,255,0.10),transparent_42%),var(--card)]">
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
-            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1 text-xs font-medium text-violet-200">
+            <div className="status-badge status-badge-info mb-4">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Restricted access
+              Admin only
             </div>
             <h1 className="app-page-title">Admin Console</h1>
             <p className="mt-2 max-w-2xl text-[var(--text-secondary)]">
-              Manage LeadHunter users, plans, usage, and early-access access.
+              Manage users, plans, account access, and product usage.
             </p>
           </div>
-          <p className="max-w-md rounded-xl border border-amber-400/20 bg-amber-400/[0.07] px-4 py-3 text-xs leading-5 text-amber-100">
+          <p className="max-w-md rounded-xl border border-[var(--warning-border)] bg-[var(--warning-soft)] px-4 py-3 text-xs leading-5 text-amber-800">
             Billing is manual during early access. Paddle subscription management is not connected yet.
           </p>
         </div>
       </header>
 
       {error ? (
-        <div role="alert" className="rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+        <div role="alert" className="app-alert app-alert-error">
           {error}
         </div>
       ) : null}
@@ -237,7 +299,7 @@ export default function AdminConsole() {
           <article key={key} className="app-card flex items-center justify-between gap-4">
             <div>
               <p className="app-label">{label}</p>
-              <p className="mt-2 text-3xl font-semibold text-white">{loading ? "-" : summary[key].toLocaleString()}</p>
+              <p className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">{loading ? "-" : summary[key].toLocaleString()}</p>
             </div>
             <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${tone}`}>
               <Icon className="h-5 w-5" />
@@ -247,7 +309,7 @@ export default function AdminConsole() {
       </section>
 
       <section className="app-card px-0 py-0">
-        <div className="border-b border-white/[0.06] px-5 py-5 sm:px-6">
+        <div className="border-b border-[var(--border-default)] px-5 py-5 sm:px-6">
           <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
             <div>
               <h2 className="app-section-title">Users</h2>
@@ -293,7 +355,7 @@ export default function AdminConsole() {
 
         <div className="overflow-x-auto">
           <table className="min-w-[980px] w-full text-left text-sm">
-            <thead className="bg-black/10 text-[11px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+            <thead className="bg-[var(--surface-secondary)] text-[11px] uppercase tracking-[0.08em] text-[var(--text-secondary)]">
               <tr>
                 <th className="px-6 py-4 font-medium">Email</th>
                 <th className="px-4 py-4 font-medium">Plan</th>
@@ -304,21 +366,21 @@ export default function AdminConsole() {
                 <th className="px-6 py-4 text-right font-medium">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.06]">
+            <tbody className="divide-y divide-[var(--border-default)]">
               {users.map((user) => (
-                <tr key={user.userId} className="transition hover:bg-white/[0.02]">
-                  <td className="px-6 py-4 font-medium text-white">{user.email}</td>
+                <tr key={user.userId} className="transition hover:bg-[var(--surface-secondary)]">
+                  <td className="px-6 py-4 font-medium text-[var(--text-primary)]">{user.email}</td>
                   <td className="px-4 py-4">
-                    <span className={`inline-flex rounded-lg border px-2.5 py-1 text-xs capitalize ${planTone(user.plan)}`}>
+                    <span className={`status-badge capitalize ${planTone(user.plan)}`}>
                       {user.plan}
                     </span>
                   </td>
                   <td className="px-4 py-4">
                     <span
-                      className={`inline-flex rounded-lg border px-2.5 py-1 text-xs capitalize ${
+                      className={`status-badge capitalize ${
                         user.status === "active"
-                          ? "border-emerald-400/25 bg-emerald-400/10 text-emerald-100"
-                          : "border-rose-400/25 bg-rose-400/10 text-rose-100"
+                          ? "status-badge-success"
+                          : "status-badge-danger"
                       }`}
                     >
                       {user.status}
@@ -341,9 +403,7 @@ export default function AdminConsole() {
                         type="button"
                         className={user.status === "active" ? "btn-danger px-3 py-2 text-xs" : "btn-secondary px-3 py-2 text-xs"}
                         disabled={saving}
-                        onClick={() =>
-                          void updateUser(user.userId, { status: user.status === "active" ? "disabled" : "active" })
-                        }
+                        onClick={() => confirmStatusChange(user)}
                       >
                         {user.status === "active" ? "Disable" : "Enable"}
                       </button>
@@ -354,8 +414,13 @@ export default function AdminConsole() {
             </tbody>
           </table>
           {!loading && !users.length ? (
-            <div className="px-6 py-16 text-center text-sm text-[var(--text-secondary)]">
-              No users match these filters.
+            <div className="px-6 py-16 text-center">
+              <p className="font-semibold text-[var(--text-primary)]">
+                {search || plan || status ? "No users match this search" : "No users found"}
+              </p>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">
+                {search || plan || status ? "Try changing the search or filters." : "User accounts will appear here when available."}
+              </p>
             </div>
           ) : null}
           {loading ? (
@@ -366,7 +431,7 @@ export default function AdminConsole() {
           ) : null}
         </div>
 
-        <div className="flex items-center justify-between border-t border-white/[0.06] px-6 py-4">
+        <div className="flex items-center justify-between border-t border-[var(--border-default)] px-6 py-4">
           <p className="text-xs text-[var(--text-secondary)]">
             Page {pagination.page} of {pagination.totalPages}
           </p>
@@ -394,23 +459,25 @@ export default function AdminConsole() {
       </section>
 
       {detailLoading ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--navy)]/35 backdrop-blur-sm">
           <Loader2 className="h-7 w-7 animate-spin text-[var(--accent)]" />
         </div>
       ) : null}
 
       {detail ? (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm" role="presentation">
+        <div className="fixed inset-0 z-50 flex justify-end bg-[var(--navy)]/35 backdrop-blur-sm" role="presentation">
           <section
+            ref={detailDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="admin-user-detail-title"
-            className="h-full w-full max-w-2xl overflow-y-auto border-l border-white/10 bg-[#111425] shadow-2xl"
+            tabIndex={-1}
+            className="h-full w-full max-w-2xl overflow-y-auto border-l border-[var(--border-default)] bg-white shadow-[var(--shadow-elevated)]"
           >
-            <div className="sticky top-0 z-10 flex items-start justify-between border-b border-white/[0.08] bg-[#111425]/95 px-6 py-5 backdrop-blur">
+            <div className="sticky top-0 z-10 flex items-start justify-between border-b border-[var(--border-default)] bg-white/95 px-6 py-5 backdrop-blur">
               <div>
                 <p className="app-label">User details</p>
-                <h2 id="admin-user-detail-title" className="mt-1 text-xl font-semibold text-white">
+                <h2 id="admin-user-detail-title" className="mt-1 text-xl font-semibold text-[var(--text-primary)]">
                   {detail.email}
                 </h2>
               </div>
@@ -420,26 +487,30 @@ export default function AdminConsole() {
             </div>
 
             <div className="space-y-6 p-6">
-              <dl className="grid gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 sm:grid-cols-2">
+              <dl className="grid gap-4 rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-5 sm:grid-cols-2">
                 <div>
                   <dt className="app-label">User ID</dt>
-                  <dd className="mt-1 break-all text-sm text-white">{detail.userId}</dd>
+                  <dd className="mt-1 break-all text-sm text-[var(--text-primary)]">{detail.userId}</dd>
                 </div>
                 <div>
                   <dt className="app-label">Created</dt>
-                  <dd className="mt-1 text-sm text-white">{formatDate(detail.createdAt)}</dd>
+                  <dd className="mt-1 text-sm text-[var(--text-primary)]">{formatDate(detail.createdAt)}</dd>
+                </div>
+                <div>
+                  <dt className="app-label">Updated</dt>
+                  <dd className="mt-1 text-sm text-[var(--text-primary)]">{formatDate(detail.updatedAt)}</dd>
                 </div>
                 <div>
                   <dt className="app-label">Leads this month</dt>
-                  <dd className="mt-1 text-lg font-semibold text-white">{detail.leadsThisMonth.toLocaleString()}</dd>
+                  <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{detail.leadsThisMonth.toLocaleString()}</dd>
                 </div>
                 <div>
                   <dt className="app-label">Total leads</dt>
-                  <dd className="mt-1 text-lg font-semibold text-white">{detail.totalLeads.toLocaleString()}</dd>
+                  <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{detail.totalLeads.toLocaleString()}</dd>
                 </div>
                 <div>
                   <dt className="app-label">Jobs</dt>
-                  <dd className="mt-1 text-lg font-semibold text-white">{detail.jobsCount.toLocaleString()}</dd>
+                  <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{detail.jobsCount.toLocaleString()}</dd>
                 </div>
               </dl>
 
@@ -473,7 +544,7 @@ export default function AdminConsole() {
               <label className="flex flex-col gap-2">
                 <span className="app-label">Admin notes</span>
                 <textarea
-                  className="min-h-32 rounded-[10px] border border-white/[0.08] bg-[var(--bg)] px-4 py-3 text-sm text-white outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-500/25"
+                  className="app-input min-h-32 py-3"
                   maxLength={2_000}
                   value={detail.adminNotes}
                   onChange={(event) => setDetail({ ...detail, adminNotes: event.target.value })}
@@ -485,13 +556,13 @@ export default function AdminConsole() {
               <section>
                 <div className="mb-3 flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-[var(--accent)]" />
-                  <h3 className="font-semibold text-white">Recent leads</h3>
+                  <h3 className="font-semibold text-[var(--text-primary)]">Recent leads</h3>
                 </div>
-                <div className="divide-y divide-white/[0.06] rounded-2xl border border-white/[0.08]">
+                <div className="divide-y divide-[var(--border-default)] rounded-2xl border border-[var(--border-default)]">
                   {detail.recentLeads.map((lead) => (
                     <div key={lead.id} className="flex items-center justify-between gap-4 px-4 py-3">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white">{lead.company_name}</p>
+                        <p className="truncate text-sm font-medium text-[var(--text-primary)]">{lead.company_name}</p>
                         <p className="mt-1 text-xs capitalize text-[var(--text-secondary)]">
                           {lead.source.replaceAll("_", " ")} · {formatDate(lead.scraped_at ?? "")}
                         </p>
@@ -507,13 +578,13 @@ export default function AdminConsole() {
               <section>
                 <div className="mb-3 flex items-center gap-2">
                   <FileText className="h-4 w-4 text-[var(--accent)]" />
-                  <h3 className="font-semibold text-white">Recent jobs</h3>
+                  <h3 className="font-semibold text-[var(--text-primary)]">Recent jobs</h3>
                 </div>
-                <div className="divide-y divide-white/[0.06] rounded-2xl border border-white/[0.08]">
+                <div className="divide-y divide-[var(--border-default)] rounded-2xl border border-[var(--border-default)]">
                   {detail.recentJobs.map((job) => (
                     <div key={job.id} className="flex items-center justify-between gap-4 px-4 py-3">
                       <div>
-                        <p className="text-sm font-medium capitalize text-white">{job.source_type.replaceAll("_", " ")}</p>
+                        <p className="text-sm font-medium capitalize text-[var(--text-primary)]">{job.source_type.replaceAll("_", " ")}</p>
                         <p className="mt-1 text-xs text-[var(--text-secondary)]">{formatDate(job.created_at)}</p>
                       </div>
                       <span className="text-xs capitalize text-[var(--text-secondary)]">
@@ -527,7 +598,7 @@ export default function AdminConsole() {
                 </div>
               </section>
 
-              <div className="sticky bottom-0 flex flex-col-reverse gap-3 border-t border-white/[0.08] bg-[#111425] py-4 sm:flex-row sm:justify-end">
+              <div className="sticky bottom-0 flex flex-col-reverse gap-3 border-t border-[var(--border-default)] bg-white py-4 sm:flex-row sm:justify-end">
                 <button type="button" className="btn-secondary justify-center" onClick={() => setDetail(null)}>
                   Cancel
                 </button>
@@ -535,13 +606,7 @@ export default function AdminConsole() {
                   type="button"
                   className="btn-primary justify-center"
                   disabled={saving}
-                  onClick={() =>
-                    void updateUser(
-                      detail.userId,
-                      { plan: detail.plan, status: detail.status, admin_notes: detail.adminNotes },
-                      true,
-                    )
-                  }
+                  onClick={confirmDetailSave}
                 >
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   {saving ? "Saving..." : "Save changes"}

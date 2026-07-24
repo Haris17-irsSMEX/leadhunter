@@ -4,12 +4,13 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Compass,
+  ArrowRight,
   ExternalLink,
   FileSpreadsheet,
   Layers3,
   Loader2,
   MapPinned,
+  MessageCircle,
   Search,
   Workflow,
   Clock3,
@@ -59,30 +60,30 @@ function formatRelative(value?: string) {
 
 function sourceBadgeClass(source: Lead["source"]) {
   if (source === "google_maps") {
-    return "border-emerald-400/30 bg-emerald-400/10 text-emerald-200";
+    return "status-badge-success";
   }
 
   if (source === "directory") {
-    return "border-violet-400/30 bg-violet-400/10 text-violet-200";
+    return "status-badge-info";
   }
 
   if (source === "hackernews") {
-    return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+    return "status-badge-warning";
   }
 
   if (source === "reddit") {
-    return "border-orange-400/30 bg-orange-400/10 text-orange-200";
+    return "status-badge-warning";
   }
 
   if (source === "indiehackers") {
-    return "border-indigo-400/30 bg-indigo-400/10 text-indigo-200";
+    return "status-badge-info";
   }
 
   if (source === "producthunt") {
-    return "border-rose-400/30 bg-rose-400/10 text-rose-200";
+    return "status-badge-warning";
   }
 
-  return "border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]";
+  return "status-badge-info";
 }
 
 function sourceLabel(source: Lead["source"]) {
@@ -115,18 +116,18 @@ function sourceLabel(source: Lead["source"]) {
 
 function statusTone(status: ScrapeJob["status"]) {
   if (status === "done") {
-    return "border-emerald-400/30 bg-emerald-400/10 text-emerald-100";
+    return "status-badge-success";
   }
 
   if (status === "failed") {
-    return "border-red-400/30 bg-red-500/10 text-red-100";
+    return "status-badge-danger";
   }
 
   if (status === "processing") {
-    return "animate-pulse border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] text-[var(--accent)]";
+    return "status-badge-info animate-pulse";
   }
 
-  return "border-slate-400/25 bg-slate-400/10 text-slate-200";
+  return "status-badge-muted";
 }
 
 function getApiErrorMessage(response: Response, fallback: string) {
@@ -150,22 +151,25 @@ function logAndToast(error: unknown, fallback: string, showToast: (message: stri
 function StatCard({
   label,
   value,
+  detail,
   icon: Icon,
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
+  detail: string;
   icon: typeof Layers3;
   tone: string;
 }) {
   return (
-    <article className="app-card">
+    <article className="app-card min-h-[142px]">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="app-label">{label}</p>
           <p className="mt-3 text-[32px] font-bold leading-none text-[var(--text-primary)]">{value}</p>
+          <p className="mt-3 text-xs leading-5 text-[var(--text-muted)]">{detail}</p>
         </div>
-        <div className={`flex h-8 w-8 items-center justify-center rounded-[10px] ${tone}`}>
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone}`}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -193,15 +197,17 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
   const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
 
   const stats = useMemo(() => {
-    const todayKey = new Date().toDateString();
-
     return {
       totalLeads,
-      scrapedToday: leads.filter((lead) => lead.scraped_at && new Date(lead.scraped_at).toDateString() === todayKey).length,
-      googleMapsLeads: leads.filter((lead) => lead.source === "google_maps").length,
-      jobsRun: jobs.length,
+      recentLeads: leads.length,
+      recentJobs: jobs.length,
     };
   }, [jobs.length, leads, totalLeads]);
+  const usagePercent = initialUsage.isAdmin
+    ? 0
+    : Math.min(100, Math.round((initialUsage.used / Math.max(initialUsage.limit, 1)) * 100));
+  const usageTone =
+    usagePercent >= 100 ? "bg-[var(--danger)]" : usagePercent >= 80 ? "bg-[var(--warning)]" : "bg-[var(--primary)]";
 
   async function handleQuickScrape() {
     setQuickLoading(true);
@@ -234,115 +240,234 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
 
   return (
     <div className="space-y-6">
-      <section className="app-card">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="max-w-3xl">
-            <p className="app-label text-[var(--accent)]">Dashboard</p>
-            <h1 className="app-page-title mt-3">Lead scraping activity at a glance.</h1>
-            <p className="mt-3 app-muted">Monitor recent jobs, run a fast one-off scrape, and keep the freshest leads close by.</p>
-          </div>
-          <button type="button" onClick={() => setShowSheetsModal(true)} className="btn-secondary">
-            <FileSpreadsheet className="h-4 w-4" />
-            Google Sheets
-          </button>
+      <header className="app-page-header">
+        <div className="app-page-header-copy">
+          <p className="app-label text-[var(--accent)]">Workspace overview</p>
+          <h1 className="app-page-title mt-2">Dashboard</h1>
+          <p className="mt-2 app-muted">Track your usage, recent lead activity, and quick actions.</p>
         </div>
-      </section>
+        <div className="app-page-actions">
+          <Link href="/finder" className="btn-primary">
+            Find leads
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <Link href="/leads" className="btn-secondary">
+            View saved leads
+          </Link>
+        </div>
+      </header>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Total Leads" value={stats.totalLeads} icon={Layers3} tone="bg-[rgba(124,92,252,0.12)] text-[var(--accent)]" />
-        <StatCard label="Scraped Today" value={stats.scrapedToday} icon={Compass} tone="bg-[rgba(52,211,153,0.12)] text-[var(--success)]" />
-        <StatCard label="Google Maps Leads" value={stats.googleMapsLeads} icon={MapPinned} tone="bg-[rgba(91,127,255,0.12)] text-blue-300" />
-        <StatCard label="Jobs Run" value={stats.jobsRun} icon={Workflow} tone="bg-[rgba(251,191,36,0.12)] text-[var(--warning)]" />
+        <StatCard
+          label="Saved leads"
+          value={stats.totalLeads.toLocaleString()}
+          detail="All records in your workspace"
+          icon={Layers3}
+          tone="bg-[var(--primary-soft)] text-[var(--accent)]"
+        />
+        <StatCard
+          label="Used this month"
+          value={initialUsage.used.toLocaleString()}
+          detail={initialUsage.isAdmin ? "Internal access is not capped" : `${initialUsage.planLabel} monthly usage`}
+          icon={Workflow}
+          tone="bg-blue-50 text-blue-700"
+        />
+        <StatCard
+          label="Leads remaining"
+          value={initialUsage.isAdmin ? "Unlimited" : initialUsage.remaining.toLocaleString()}
+          detail={initialUsage.isAdmin ? "Internal testing access" : `${initialUsage.limit.toLocaleString()} lead allowance`}
+          icon={MapPinned}
+          tone={
+            !initialUsage.isAdmin && initialUsage.remaining === 0
+              ? "bg-red-50 text-red-700"
+              : !initialUsage.isAdmin && usagePercent >= 80
+                ? "bg-amber-50 text-amber-700"
+                : "bg-green-50 text-green-700"
+          }
+        />
+        <StatCard
+          label="Recent searches"
+          value={stats.recentJobs}
+          detail="Latest activity loaded below"
+          icon={Clock3}
+          tone="bg-amber-50 text-amber-700"
+        />
       </section>
 
-      <section className="app-card flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="app-label">{initialUsage.planLabel} plan</p>
-          <p className="mt-2 text-lg font-semibold text-white">
-            {initialUsage.isAdmin
-              ? "Internal testing access"
-              : `${initialUsage.used} of ${initialUsage.limit} leads used this month`}
-          </p>
+      <section
+        className={`app-card ${
+          !initialUsage.isAdmin && usagePercent >= 100
+            ? "border-[var(--danger-border)]"
+            : !initialUsage.isAdmin && usagePercent >= 80
+              ? "border-[var(--warning-border)]"
+              : ""
+        }`}
+      >
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="app-section-title">Monthly usage</h2>
+              <span className="status-badge status-badge-info">{initialUsage.planLabel} plan</span>
+            </div>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              {initialUsage.isAdmin
+                ? "Internal testing access is active."
+                : `${initialUsage.used.toLocaleString()} of ${initialUsage.limit.toLocaleString()} leads used. ${initialUsage.remaining.toLocaleString()} remaining.`}
+            </p>
+            {!initialUsage.isAdmin ? (
+              <div className="mt-4">
+                <div
+                  className="app-progress"
+                  role="progressbar"
+                  aria-label="Monthly lead usage"
+                  aria-valuemin={0}
+                  aria-valuemax={initialUsage.limit}
+                  aria-valuenow={initialUsage.used}
+                >
+                  <span className={usageTone} style={{ width: `${usagePercent}%` }} />
+                </div>
+                {usagePercent >= 100 ? (
+                  <p className="mt-3 text-sm font-semibold text-[var(--danger)]">Monthly lead limit reached</p>
+                ) : usagePercent >= 80 ? (
+                  <p className="mt-3 text-sm font-semibold text-[var(--warning)]">You are approaching your monthly allowance.</p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           {!initialUsage.isAdmin ? (
-            <p className="mt-1 text-sm text-[var(--text-secondary)]">{initialUsage.remaining} leads remaining.</p>
+            <a href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`} className="btn-secondary shrink-0">
+              Request plan upgrade
+            </a>
           ) : null}
         </div>
-        {!initialUsage.isAdmin ? (
-          <a href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`} className="btn-secondary justify-center">
-            Request plan upgrade
-          </a>
-        ) : null}
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
-        <div className="space-y-6">
-          <div className="app-card">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="app-section-title">Recent Jobs</h2>
-                <p className="mt-1 app-muted">The last 10 queue runs across every source.</p>
-              </div>
+      {!totalLeads && !jobs.length ? (
+        <section className="app-empty-state">
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--accent)]">
+            <Search className="h-6 w-6" aria-hidden="true" />
+          </span>
+          <h2 className="mt-5 app-section-title">Build your first lead list</h2>
+          <p className="mt-2 max-w-md app-muted">Choose a niche and city to start collecting public business information.</p>
+          <Link href="/finder" className="btn-primary mt-6">
+            Find leads
+          </Link>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">Your saved leads and activity will appear here.</p>
+        </section>
+      ) : null}
+
+      <section aria-label="Quick actions" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            title: "Search Google Maps",
+            copy: "Find local businesses by niche and city.",
+            href: "/finder",
+            icon: MapPinned,
+          },
+          {
+            title: "Explore communities",
+            copy: "Review supported public community sources.",
+            href: "/finder",
+            icon: MessageCircle,
+          },
+          {
+            title: "View saved leads",
+            copy: "Filter, enrich, and export your workspace.",
+            href: "/leads",
+            icon: Layers3,
+          },
+        ].map(({ title, copy, href, icon: Icon }) => (
+          <Link key={title} href={href} className="app-card group min-h-[150px] transition hover:-translate-y-0.5 hover:border-blue-200">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--accent)]">
+              <Icon className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <h2 className="mt-4 text-sm font-bold text-[var(--text-primary)]">{title}</h2>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">{copy}</p>
+          </Link>
+        ))}
+        <button type="button" onClick={() => setShowSheetsModal(true)} className="app-card group min-h-[150px] text-left transition hover:-translate-y-0.5 hover:border-blue-200">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-green-700">
+            <FileSpreadsheet className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <h2 className="mt-4 text-sm font-bold text-[var(--text-primary)]">Sync to Google Sheets</h2>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">Send filtered records to a sheet you control.</p>
+        </button>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.75fr)]">
+        <div className="app-card overflow-hidden p-0">
+          <div className="flex items-center justify-between gap-4 border-b border-[var(--border-default)] px-5 py-5 sm:px-6">
+            <div>
+              <h2 className="app-section-title">Recent activity</h2>
+              <p className="mt-1 app-muted">Your latest searches across available sources.</p>
             </div>
-
-            {jobs.length ? (
-              <div className="mt-5 overflow-hidden rounded-2xl border border-[var(--border)]">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">Type</th>
-                        <th className="px-4 py-3 font-semibold">Status</th>
-                        <th className="px-4 py-3 font-semibold">Input Summary</th>
-                        <th className="px-4 py-3 font-semibold">Leads Found</th>
-                        <th className="px-4 py-3 font-semibold">Time Ago</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/10">
-                      {jobs.slice(0, 10).map((job) => {
-                        const clickable = job.status === "done";
-
-                        return (
-                          <tr
-                            key={job.id}
-                            className={`${clickable ? "cursor-pointer transition hover:bg-white/[0.03]" : ""}`}
-                            onClick={() => {
-                              if (clickable) {
-                                router.push(`/leads?job_id=${encodeURIComponent(job.id)}`);
-                              }
-                            }}
-                          >
-                            <td className="px-4 py-4 text-[var(--text-primary)]">{job.source_type}</td>
-                            <td className="px-4 py-4">
-                              <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${statusTone(job.status)}`}>
-                                {job.status}
-                              </span>
-                            </td>
-                            <td className="max-w-xs truncate px-4 py-4 text-[var(--text-secondary)]">{job.input_summary ?? `${job.source_type} job`}</td>
-                            <td className="px-4 py-4 text-[var(--text-secondary)]">{job.results_count}</td>
-                            <td className="px-4 py-4 text-[var(--text-secondary)]">{formatRelative(job.created_at)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : (
-              <div className="mt-5 flex flex-col items-center rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-5 py-12 text-center text-[var(--text-secondary)]">
-                <Clock3 className="mb-3 h-8 w-8 text-[var(--text-muted)]" />
-                No jobs yet. Head to Finder and run your first scrape.
-              </div>
-            )}
+            <Link href="/finder" className="text-sm font-semibold text-[var(--accent)]">
+              Find leads
+            </Link>
           </div>
+
+          {jobs.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead className="bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
+                  <tr>
+                    <th className="px-5 py-3 font-semibold sm:px-6">Search</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Saved</th>
+                    <th className="px-5 py-3 font-semibold sm:px-6">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-default)]">
+                  {jobs.slice(0, 10).map((job) => {
+                    const clickable = job.status === "done";
+                    return (
+                      <tr
+                        key={job.id}
+                        className={clickable ? "cursor-pointer transition hover:bg-[var(--surface-secondary)]" : ""}
+                        onClick={() => {
+                          if (clickable) router.push(`/leads?job_id=${encodeURIComponent(job.id)}`);
+                        }}
+                      >
+                        <td className="px-5 py-4 sm:px-6">
+                          <p className="font-semibold capitalize text-[var(--text-primary)]">{job.source_type.replaceAll("_", " ")}</p>
+                          <p className="mt-1 max-w-sm truncate text-xs text-[var(--text-secondary)]">
+                            {job.input_summary ?? `${job.source_type} search`}
+                          </p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className={`status-badge capitalize ${statusTone(job.status)}`}>{job.status}</span>
+                        </td>
+                        <td className="px-4 py-4 font-semibold text-[var(--text-primary)]">{job.results_count}</td>
+                        <td className="px-5 py-4 text-[var(--text-secondary)] sm:px-6">{formatRelative(job.created_at)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="app-empty-state m-5 shadow-none sm:m-6">
+              <Clock3 className="h-7 w-7 text-[var(--text-muted)]" aria-hidden="true" />
+              <h3 className="mt-4 font-bold text-[var(--text-primary)]">No searches yet</h3>
+              <p className="mt-2 text-sm text-[var(--text-secondary)]">Run your first search from Finder to see activity here.</p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
           <div className="app-card">
-            <h2 className="app-section-title">Quick Scrape</h2>
-            <p className="mt-2 app-muted">Drop in a single company URL and save a fresh lead without leaving the dashboard.</p>
-
+            <h2 className="app-section-title">Quick website lookup</h2>
+            <p className="mt-2 app-muted">Save one public company website without leaving the dashboard.</p>
             <div className="mt-5 space-y-4">
-              <input value={quickUrl} onChange={(event) => setQuickUrl(event.target.value)} placeholder="https://example.com" className="app-input w-full" />
+              <label className="app-filter-field">
+                <span className="app-label">Company website</span>
+                <input
+                  value={quickUrl}
+                  onChange={(event) => setQuickUrl(event.target.value)}
+                  placeholder="https://example.com"
+                  className="app-input w-full"
+                />
+              </label>
               <button
                 type="button"
                 disabled={quickLoading || !quickUrl.trim()}
@@ -350,22 +475,25 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
                 className="btn-primary disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {quickLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                {quickLoading ? "Scraping..." : "Scrape"}
+                {quickLoading ? "Checking website..." : "Save website lead"}
               </button>
             </div>
 
             {quickLead ? (
-              <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--bg)] p-4">
+              <div className="mt-5 rounded-2xl border border-[var(--success-border)] bg-[var(--success-soft)] p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-semibold text-[var(--text-primary)]">{quickLead.company_name}</p>
-                    <p className="mt-1 text-sm text-[var(--text-secondary)]">{quickLead.email || quickLead.website || quickLead.location || "-"}</p>
+                    <p className="mt-1 truncate text-sm text-[var(--text-secondary)]">
+                      {quickLead.email || quickLead.website || quickLead.location || "Lead saved"}
+                    </p>
                   </div>
                   <a
                     href={quickLead.website || "#"}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className={`icon-button ${quickLead.website ? "" : "pointer-events-none opacity-40"}`}
+                    aria-label={`Open ${quickLead.company_name} website`}
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
@@ -375,26 +503,28 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
           </div>
 
           <div className="app-card">
-            <div className="flex items-end justify-between gap-4">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="app-section-title">Recent Leads</h2>
+                <h2 className="app-section-title">Recent leads</h2>
                 <p className="mt-1 app-muted">The latest five saved records.</p>
               </div>
-              <Link href="/leads" className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110">
-                View all -&gt;
+              <Link href="/leads" className="text-sm font-semibold text-[var(--accent)]">
+                View all
               </Link>
             </div>
 
             {leads.length ? (
-              <div className="mt-5 space-y-3">
+              <div className="mt-5 divide-y divide-[var(--border-default)] overflow-hidden rounded-2xl border border-[var(--border-default)]">
                 {leads.map((lead) => (
-                  <div key={lead.id ?? `${lead.company_name}-${lead.source_url}`} className="rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-4 py-4">
+                  <div key={lead.id ?? `${lead.company_name}-${lead.source_url}`} className="bg-white px-4 py-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-semibold text-[var(--text-primary)]">{lead.company_name}</p>
-                        <p className="mt-1 text-sm text-[var(--text-secondary)]">{lead.email ?? "-"}</p>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-[var(--text-primary)]">{lead.company_name}</p>
+                        <p className="mt-1 truncate text-xs text-[var(--text-secondary)]">
+                          {lead.email || lead.website || lead.phone || "No contact information yet"}
+                        </p>
                       </div>
-                      <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium ${sourceBadgeClass(lead.source)}`}>
+                      <span className={`status-badge shrink-0 ${sourceBadgeClass(lead.source)}`}>
                         {sourceLabel(lead.source)}
                       </span>
                     </div>
@@ -402,8 +532,9 @@ export default function DashboardClient({ initialLeads, initialTotalLeads, initi
                 ))}
               </div>
             ) : (
-              <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-5 py-12 text-center text-[var(--text-secondary)]">
-                No leads yet. Your newest results will appear here.
+              <div className="mt-5 rounded-2xl border border-dashed border-[var(--border-default)] bg-[var(--surface-secondary)] px-5 py-10 text-center">
+                <p className="font-semibold text-[var(--text-primary)]">No leads yet</p>
+                <p className="mt-2 text-sm text-[var(--text-secondary)]">Your newest saved records will appear here.</p>
               </div>
             )}
           </div>

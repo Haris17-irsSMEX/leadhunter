@@ -1,5 +1,6 @@
 "use client";
 
+import { CheckCircle2, CircleAlert, X } from "lucide-react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type ToastType = "success" | "error";
@@ -62,15 +63,32 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       {toast.visible ? (
-        <div className="pointer-events-none fixed bottom-5 right-5 z-[100] max-w-sm rounded-2xl border px-4 py-3 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+        <div
+          role={toast.type === "error" ? "alert" : "status"}
+          aria-live={toast.type === "error" ? "assertive" : "polite"}
+          className="fixed inset-x-4 bottom-5 z-[100] sm:left-auto sm:right-5 sm:w-full sm:max-w-sm"
+        >
           <div
-            className={`rounded-xl px-4 py-3 text-sm font-medium ${
+            className={`flex items-start gap-3 rounded-2xl border px-4 py-3.5 text-sm font-medium shadow-[var(--shadow-elevated)] ${
               toast.type === "success"
-                ? "border border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
-                : "border border-red-400/30 bg-red-500/15 text-red-100"
+                ? "border-[var(--success-border)] bg-[var(--success-soft)] text-green-800"
+                : "border-[var(--danger-border)] bg-[var(--danger-soft)] text-red-800"
             }`}
           >
-            {toast.message}
+            {toast.type === "success" ? (
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--success)]" aria-hidden="true" />
+            ) : (
+              <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-[var(--danger)]" aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1 leading-5">{toast.message}</span>
+            <button
+              type="button"
+              onClick={hideToast}
+              className="-mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-current opacity-60 transition hover:bg-black/5 hover:opacity-100"
+              aria-label="Dismiss notification"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
+            </button>
           </div>
         </div>
       ) : null}

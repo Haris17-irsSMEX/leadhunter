@@ -14,7 +14,7 @@ export default function CopyButton({ value, label = "Copy" }: { value: string; l
 
   return (
     <button type="button" onClick={() => void copy()} className="btn-secondary h-10 shrink-0 px-3" aria-live="polite">
-      {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+      {copied ? <Check className="h-4 w-4 text-[var(--success)]" /> : <Copy className="h-4 w-4" />}
       {copied ? "Copied" : label}
     </button>
   );

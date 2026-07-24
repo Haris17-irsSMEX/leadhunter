@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Sparkles, Trash2, Users } from "lucide-react";
+import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Trash2, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
@@ -156,24 +156,24 @@ function sourceLabel(source: Lead["source"]) {
 
 function sourceBadgeClass(source: Lead["source"]) {
   if (source === "google_maps") {
-    return "border-[rgba(52,211,153,0.28)] bg-[rgba(52,211,153,0.15)] text-[var(--success)]";
+    return "status-badge-success";
   }
   if (source === "directory") {
-    return "border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.15)] text-[var(--accent)]";
+    return "status-badge-info";
   }
   if (source === "hackernews") {
-    return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+    return "status-badge-warning";
   }
   if (source === "reddit") {
-    return "border-orange-400/30 bg-orange-400/10 text-orange-200";
+    return "status-badge-warning";
   }
   if (source === "indiehackers") {
-    return "border-indigo-400/30 bg-indigo-400/10 text-indigo-200";
+    return "status-badge-info";
   }
   if (source === "producthunt") {
-    return "border-rose-400/30 bg-rose-400/10 text-rose-200";
+    return "status-badge-warning";
   }
-  return "border-[rgba(91,127,255,0.28)] bg-[rgba(91,127,255,0.15)] text-blue-300";
+  return "status-badge-info";
 }
 
 function normalizeText(value?: string) {
@@ -322,35 +322,22 @@ function filenameFromDisposition(disposition: string | null, fallback: string) {
   return filenameMatch?.[1] ?? fallback;
 }
 
-function DetailField({ label, value }: { label: string; value?: string | string[] }) {
-  const display = emptyText(value);
-
-  return (
-    <div>
-      <p className="app-label text-xs">{label}</p>
-      <p className={display ? "mt-1 break-words text-sm text-[var(--text-primary)]" : "mt-1 text-sm text-[var(--text-muted)]"}>
-        {display || "—"}
-      </p>
-    </div>
-  );
-}
-
 function statusBadge(label: string, status?: string) {
   const normalized = status ?? "not_checked";
   const className =
     label === "Provider limit"
-      ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+      ? "status-badge-warning"
       : normalized === "found" || normalized === "completed"
-      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
+      ? "status-badge-success"
       : normalized === "unclear" || normalized === "partial"
-        ? "border-amber-400/30 bg-amber-400/10 text-amber-200"
+        ? "status-badge-warning"
         : normalized === "error"
-          ? "border-rose-400/30 bg-rose-400/10 text-rose-200"
+          ? "status-badge-danger"
           : normalized === "not_found"
-            ? "border-white/15 bg-white/[0.04] text-[var(--text-secondary)]"
-            : "border-white/10 bg-white/[0.03] text-[var(--text-muted)]";
+            ? "status-badge-muted"
+            : "status-badge-muted";
 
-  return <span className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold ${className}`}>{label}</span>;
+  return <span className={`status-badge px-2 py-0.5 text-[11px] ${className}`}>{label}</span>;
 }
 
 function scrapeStatusBadge(status?: Lead["scrape_status"]) {
@@ -377,7 +364,7 @@ function InfoItem({ label, value }: { label: string; value?: string | string[] }
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3">
+    <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3">
       <p className="app-label text-[10px]">{label}</p>
       <p className="mt-1 break-words text-sm text-[var(--text-primary)]">{display}</p>
     </div>
@@ -393,8 +380,8 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
     <a
       href={href}
       target="_blank"
-      rel="noreferrer"
-      className={`inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-white/[0.06] ${className}`}
+      rel="noopener noreferrer"
+      className={`inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-[var(--primary-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:bg-blue-100 ${className}`}
     >
       {label}
       <ExternalLink className="h-3.5 w-3.5" />
@@ -438,7 +425,7 @@ function GeneralIntelligenceBadges({ lead }: { lead: Lead }) {
     <div className="flex flex-wrap gap-1.5">
       {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
       {statusBadge(lead.website ? "Website available" : "No website", lead.website ? "found" : "not_checked")}
-      {statusBadge(safeEmail ? "Public email found" : "No public email", safeEmail ? "found" : "not_found")}
+      {statusBadge(safeEmail ? "Public email found" : "No public email found", safeEmail ? "found" : "not_found")}
       {pageUrl ? statusBadge("Contact page found", "found") : null}
       <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
         {sourceLabel(lead.source)}
@@ -461,7 +448,7 @@ function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: Delive
   const menuUrl = deliveryPlatformMenuUrl(lead, platform);
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-[var(--bg)] p-4">
+    <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-[var(--text-primary)]">{deliveryPlatformLabel(platform)}</p>
@@ -492,7 +479,7 @@ function IndustryTags({ industry }: { industry?: string }) {
   return (
     <div className="flex flex-wrap gap-2">
       {tags.map((tag) => (
-        <span key={tag} className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-[var(--text-secondary)]">
+        <span key={tag} className="rounded-full border border-[var(--border-default)] bg-[var(--surface-secondary)] px-2.5 py-1 text-xs text-[var(--text-secondary)]">
           {tag}
         </span>
       ))}
@@ -569,195 +556,8 @@ function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
   return "Not checked";
 }
 
-function DeliveryBadges({ lead }: { lead: Lead }) {
-  const hasRestaurantSignals =
-    (lead.restaurant_enrichment_status && lead.restaurant_enrichment_status !== "not_checked") ||
-    deliveryPlatforms.some((platform) => {
-      const status = deliveryPlatformStatus(lead, platform.value);
-      return status && status !== "not_checked";
-    }) ||
-    lead.email_source_url ||
-    typeof lead.email_confidence === "number";
-
-  if (!hasRestaurantSignals) {
-    return null;
-  }
-
-  return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
-      {deliveryPlatforms
-        .filter((platform) => {
-          const status = deliveryPlatformStatus(lead, platform.value);
-          return status && status !== "not_checked";
-        })
-        .map((platform) => (
-          <span key={platform.value}>
-            {statusBadge(`${platform.label}: ${deliveryStatusLabelForLead(lead, platform.value)}`, deliveryPlatformStatus(lead, platform.value))}
-          </span>
-        ))}
-      {statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)}
-    </div>
-  );
-}
-
 function needsEmailEnrichment(lead: Lead) {
   return Boolean(lead.id && lead.website?.trim() && !cleanSafePublicEmail(lead.email));
-}
-
-function LeadRow({
-  lead,
-  isExpanded,
-  isSelected,
-  onToggleExpand,
-  onToggleSelect,
-  onCopyEmail,
-  onCopyLead,
-  onCopyPhone,
-  onDelete,
-  onEnrichEmail,
-  isEnriching,
-}: {
-  lead: Lead;
-  isExpanded: boolean;
-  isSelected: boolean;
-  onToggleExpand: () => void;
-  onToggleSelect: (checked: boolean) => void;
-  onCopyEmail: () => void;
-  onCopyLead: () => void;
-  onCopyPhone: () => void;
-  onDelete: () => void;
-  onEnrichEmail: () => void;
-  isEnriching: boolean;
-}) {
-  const rowId = lead.id ?? `${lead.company_name}-${lead.source_url}`;
-  const industry = industryPreview(lead.industry);
-  const canFindEmail = needsEmailEnrichment(lead);
-  const emailButtonLabel = "Find email";
-  const safeEmail = cleanSafePublicEmail(lead.email);
-
-  return (
-    <>
-      <tr className="cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-white/[0.03]" onClick={onToggleExpand}>
-        <td className="w-[40px] px-3 py-4" onClick={(event) => event.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={(event) => onToggleSelect(event.target.checked)}
-            className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
-          />
-        </td>
-        <td className="px-3 py-4">
-          <div className="truncate text-sm font-medium">{lead.company_name}</div>
-          <div className="mt-1 flex min-w-0 items-center gap-2">
-            <span className="truncate text-xs text-[var(--text-secondary)]">{lead.website ?? "No website"}</span>
-            {canFindEmail ? (
-              <button
-                type="button"
-                disabled={isEnriching}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEnrichEmail();
-                }}
-                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-2 py-1 text-[11px] font-medium text-[var(--accent)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`${emailButtonLabel} for ${lead.company_name}`}
-                title="Search public contact and about pages when available."
-              >
-                {isEnriching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Mail className="h-3 w-3" />}
-                <Sparkles className="h-3 w-3" />
-                {emailButtonLabel}
-              </button>
-            ) : null}
-          </div>
-          <DeliveryBadges lead={lead} />
-        </td>
-        <td className="px-3 py-4">
-          <div className="truncate text-sm text-[var(--text-secondary)]">{lead.location ?? "—"}</div>
-        </td>
-        <td className="px-3 py-4">
-          <div className="truncate text-sm text-[var(--text-secondary)]">
-            {industry.visible || "—"}
-            {industry.more ? <span className="ml-1 text-[var(--text-muted)]">+{industry.more} more</span> : null}
-          </div>
-        </td>
-        <td className="px-3 py-4">
-          <span className={`inline-flex max-w-full rounded-lg border px-2.5 py-1 text-xs font-medium ${sourceBadgeClass(lead.source)}`}>
-            <span className="truncate">{sourceLabel(lead.source)}</span>
-          </span>
-        </td>
-        <td className="px-3 py-4 text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
-        <td className="px-3 py-4" onClick={(event) => event.stopPropagation()}>
-          <div className="flex items-center gap-1">
-            <a
-              href={lead.website || "#"}
-              target="_blank"
-              rel="noreferrer"
-              className={`icon-button h-7 w-7 ${lead.website ? "" : "pointer-events-none opacity-40"}`}
-              aria-label={`Open ${lead.company_name} website`}
-            >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-            <button type="button" onClick={onCopyEmail} className="icon-button h-7 w-7" aria-label={`Copy ${lead.company_name} email`}>
-              <Copy className="h-4 w-4" />
-            </button>
-            {canFindEmail ? (
-              <button
-                type="button"
-                disabled={isEnriching}
-                onClick={onEnrichEmail}
-                className="icon-button h-7 w-7 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={`${emailButtonLabel} for ${lead.company_name}`}
-                title="Search public contact and about pages when available."
-              >
-                {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-              </button>
-            ) : null}
-            <button type="button" onClick={onDelete} className="icon-button h-7 w-7 text-red-400 hover:text-red-400" aria-label={`Delete ${lead.company_name}`}>
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </td>
-      </tr>
-      {isExpanded ? (
-        <tr className="border-b border-[var(--border)] bg-[rgba(255,255,255,0.02)]">
-          <td colSpan={7} className="px-4 py-5">
-            <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
-              <DetailField label="Company" value={lead.company_name} />
-              <DetailField label="Website" value={lead.website} />
-              <DetailField label="Description" value={lead.description} />
-              <DetailField label="Founder" value={lead.founder_name} />
-              <DetailField label="Email" value={safeEmail} />
-              <DetailField label="Email Source" value={safeEmail ? lead.email_source_url : undefined} />
-              <DetailField label="Email Confidence" value={safeEmail && typeof lead.email_confidence === "number" ? String(lead.email_confidence) : undefined} />
-              <DetailField label="Phone" value={lead.phone} />
-              {deliveryPlatforms.map((platform) => (
-                <DetailField key={`${platform.value}-status`} label={platform.label} value={deliveryStatusLabelForLead(lead, platform.value)} />
-              ))}
-              {deliveryPlatforms.map((platform) => (
-                <DetailField key={`${platform.value}-url`} label={`${platform.label} Menu URL`} value={deliveryPlatformMenuUrl(lead, platform.value)} />
-              ))}
-              {deliveryPlatforms.map((platform) => (
-                <DetailField
-                  key={`${platform.value}-confidence`}
-                  label={`${platform.label} Confidence`}
-                  value={typeof deliveryPlatformConfidence(lead, platform.value) === "number" ? String(deliveryPlatformConfidence(lead, platform.value)) : undefined}
-                />
-              ))}
-              <DetailField label="Restaurant Enrichment" value={enrichmentStatusLabel(lead.restaurant_enrichment_status)} />
-              <DetailField label="LinkedIn" value={lead.linkedin_url} />
-              <DetailField label="Twitter" value={lead.twitter_handle} />
-              <DetailField label="Location" value={lead.location} />
-              <DetailField label="Country" value={lead.country} />
-              <DetailField label="Industry" value={lead.industry} />
-              <DetailField label="Employees" value={lead.employee_count} />
-              <DetailField label="Pricing" value={lead.pricing_model} />
-              <DetailField label="Tech Stack" value={lead.tech_stack} />
-              <DetailField label="Source URL" value={lead.source_url} />
-            </div>
-          </td>
-        </tr>
-      ) : null}
-    </>
-  );
 }
 
 function ProfessionalLeadRow({
@@ -804,19 +604,19 @@ function ProfessionalLeadRow({
 
   return (
     <>
-      <tr className="cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-white/[0.025]" onClick={onToggleExpand}>
+      <tr className="cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]" onClick={onToggleExpand}>
         <td className="w-[40px] px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
           <input
             type="checkbox"
             checked={isSelected}
             onChange={(event) => onToggleSelect(event.target.checked)}
-            className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+            className="app-checkbox"
           />
         </td>
         <td className="px-4 py-5 align-top">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="max-w-[340px] truncate text-sm font-semibold text-white">{lead.company_name}</p>
-            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${sourceBadgeClass(lead.source)}`}>
+            <p className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</p>
+            <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
               {sourceLabel(lead.source)}
             </span>
             {scrapeStatusBadge(lead.scrape_status)}
@@ -838,7 +638,7 @@ function ProfessionalLeadRow({
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
             {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
-            {safeEmail ? statusBadge("Email found", "found") : statusBadge("No public email", "not_found")}
+            {safeEmail ? statusBadge("Public email found", "found") : statusBadge("No public email found", "not_found")}
             {safeEmail ? <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{safeEmail}</p> : null}
             {!safeEmail && pageUrl ? (
               <SmartLink href={pageUrl} label="Use contact form" className="max-w-fit" />
@@ -874,7 +674,7 @@ function ProfessionalLeadRow({
             <a
               href={lead.website || "#"}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className={`icon-button h-8 w-8 ${lead.website ? "" : "pointer-events-none opacity-40"}`}
               aria-label={`Open ${lead.company_name} website`}
               title={lead.website ? `Open ${websiteLabel}` : "No website"}
@@ -896,21 +696,21 @@ function ProfessionalLeadRow({
                 {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               </button>
             ) : null}
-            <button type="button" onClick={onDelete} className="icon-button h-8 w-8 text-red-400 hover:text-red-400" aria-label={`Delete ${lead.company_name}`}>
+            <button type="button" onClick={onDelete} className="icon-button h-8 w-8 text-[var(--danger)] hover:text-[var(--danger)]" aria-label={`Delete ${lead.company_name}`}>
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
         </td>
       </tr>
       {isExpanded ? (
-        <tr className="border-b border-[var(--border)] bg-[rgba(255,255,255,0.018)]">
+        <tr className="border-b border-[var(--border)] bg-[var(--surface-secondary)]">
           <td colSpan={7} className="px-4 py-5">
-            <div className="rounded-3xl border border-white/10 bg-[rgba(255,255,255,0.025)] p-5 shadow-2xl shadow-black/10">
+            <div className="rounded-[22px] border border-[var(--border-default)] bg-white p-5 shadow-[var(--shadow-card)]">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-xl font-semibold text-white">{lead.company_name}</h3>
-                    <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
+                    <h3 className="text-xl font-semibold text-[var(--text-primary)]">{lead.company_name}</h3>
+                    <span className={`status-badge ${sourceBadgeClass(lead.source)}`}>
                       {sourceLabel(lead.source)}
                     </span>
                     {showDeliveryIntelligence
@@ -929,7 +729,7 @@ function ProfessionalLeadRow({
               </div>
 
               <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-                <section className="rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
                   <p className="app-label text-xs">Lead overview</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     <InfoItem label="Location" value={lead.location} />
@@ -944,14 +744,14 @@ function ProfessionalLeadRow({
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-white/10 bg-[var(--card)] p-4">
-                  <p className="app-label text-xs">Contact</p>
+                <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
+                  <p className="app-label text-xs">Contact information</p>
                   <div className="mt-4 space-y-3">
                     {safeEmail ? (
                       <>
                         <div className="flex flex-wrap items-center gap-2">
                           {statusBadge("Email found", "found")}
-                          <span className="text-sm text-white">{safeEmail}</span>
+                          <span className="text-sm text-[var(--text-primary)]">{safeEmail}</span>
                         </div>
                         {typeof lead.email_confidence === "number" ? (
                           <p className="text-sm text-[var(--text-secondary)]">{lead.email_confidence}/100 confidence</p>
@@ -959,7 +759,7 @@ function ProfessionalLeadRow({
                         <SmartLink href={lead.email_source_url} label="Open source" />
                       </>
                     ) : (
-                      <div className="rounded-xl border border-white/10 bg-white/[0.025] p-3 text-sm text-[var(--text-secondary)]">
+                      <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3 text-sm text-[var(--text-secondary)]">
                         No public email found.
                         {pageUrl || lead.phone ? " Use the contact page or phone outreach." : null}
                       </div>
@@ -974,13 +774,13 @@ function ProfessionalLeadRow({
                         </button>
                       ) : null}
                       {safeEmail ? (
-                        <button type="button" onClick={onCopyEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-white/[0.06]">
+                        <button type="button" onClick={onCopyEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-default)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]">
                           <Copy className="h-3.5 w-3.5" />
                           Copy email
                         </button>
                       ) : null}
                       {lead.phone ? (
-                        <button type="button" onClick={onCopyPhone} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[var(--text-primary)] transition hover:bg-white/[0.06]">
+                        <button type="button" onClick={onCopyPhone} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-default)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]">
                           <Copy className="h-3.5 w-3.5" />
                           Copy phone
                         </button>
@@ -991,7 +791,7 @@ function ProfessionalLeadRow({
               </div>
 
               {showDeliveryIntelligence ? (
-                <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
+                <section className="mt-4 rounded-2xl border border-[var(--border-default)] bg-white p-4">
                   <p className="app-label text-xs">Delivery intelligence</p>
                   <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                     {deliveryPlatforms.map((platform) => (
@@ -1002,8 +802,8 @@ function ProfessionalLeadRow({
               ) : null}
 
               {hasNotes ? (
-                <section className="mt-4 rounded-2xl border border-white/10 bg-[var(--card)] p-4">
-                  <p className="app-label text-xs">Notes and metadata</p>
+                <section className="mt-4 rounded-2xl border border-[var(--border-default)] bg-white p-4">
+                  <p className="app-label text-xs">Extra information</p>
                   <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     <InfoItem label="Description" value={lead.description} />
                     <InfoItem label="Founder name" value={lead.founder_name} />
@@ -1186,6 +986,14 @@ export default function LeadsTable() {
     restaurantEnrichmentFilter !== "all" ||
     contactFilter !== "all" ||
     Boolean(search.trim());
+  const activeFilterCount = [
+    Boolean(search.trim()),
+    sourceFilter !== "all",
+    websiteStatusFilter !== "all",
+    restaurantEnrichmentFilter !== "all",
+    contactFilter !== "all",
+    Boolean(jobIdFilter),
+  ].filter(Boolean).length;
 
   function clearFilters() {
     setSearch("");
@@ -1367,10 +1175,11 @@ export default function LeadsTable() {
 
       if (!options.quiet) {
         const enrichedEmail = cleanSafePublicEmail(payload.email);
-        showToast(
-          enrichedEmail ? "Email found and saved." : payload.message ?? "No public email found. Try the website contact form or phone.",
-          enrichedEmail ? "success" : "error",
-        );
+        if (enrichedEmail) {
+          showToast("Email found and saved.", "success");
+        } else {
+          setCopyMessage(payload.message ?? "No public email found. Try the website contact form or phone.");
+        }
       }
 
       return payload;
@@ -1454,6 +1263,10 @@ export default function LeadsTable() {
     { label: "Websites", value: "website" },
     { label: "Directories", value: "directory" },
     { label: "Communities", value: "communities" },
+    { label: "Hacker News", value: "hackernews" },
+    { label: "Reddit", value: "reddit" },
+    { label: "Indie Hackers", value: "indiehackers" },
+    { label: "Product Hunt", value: "producthunt" },
   ];
   const websiteStatusPills: Array<{ label: string; value: WebsiteStatusFilter }> = [
     { label: "All", value: "all" },
@@ -1502,12 +1315,12 @@ export default function LeadsTable() {
 
   return (
     <div className="space-y-5">
-      <section className="app-card">
+      <header className="app-page-header">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <div className="flex items-center gap-3">
               <h1 className="app-page-title">My Leads</h1>
-              <span className="rounded-lg border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-3 py-1 text-sm font-medium text-[var(--accent)]">
+              <span className="status-badge status-badge-info">
                 {total}
               </span>
             </div>
@@ -1526,24 +1339,27 @@ export default function LeadsTable() {
             </label>
             <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
-              {exporting ? "Exporting..." : "Export CSV"}
+              {exporting ? "Exporting..." : "Export to CSV"}
             </button>
             <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
-              {exporting ? "Exporting..." : "Export Excel"}
+              {exporting ? "Exporting..." : "Export to Excel"}
             </button>
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-11 self-end justify-center">
               <FileSpreadsheet className="h-4 w-4" />
-              Sync to Sheets
+              Sync to Google Sheets
             </button>
           </div>
         </div>
-      </section>
+      </header>
 
-      <section className="app-card space-y-5">
+      <section className="app-card space-y-5" aria-labelledby="lead-filters-title">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="app-label text-xs">Filters</p>
+            <div className="flex items-center gap-2">
+              <h2 id="lead-filters-title" className="app-section-title">Filters</h2>
+              {activeFilterCount ? <span className="status-badge status-badge-info">{activeFilterCount} active</span> : null}
+            </div>
             <p className="mt-1 text-sm text-[var(--text-secondary)]">Refine the list without changing your saved leads.</p>
           </div>
           {filtersActive ? (
@@ -1552,7 +1368,7 @@ export default function LeadsTable() {
               onClick={clearFilters}
               className="text-sm font-medium text-[var(--accent)] transition hover:brightness-110"
             >
-              Clear filters
+              Reset filters
             </button>
           ) : null}
         </div>
@@ -1574,82 +1390,62 @@ export default function LeadsTable() {
           </select>
         </div>
 
-        <div className="space-y-4">
-          <div>
-            <span className="app-label text-xs">Source</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {sourcePills.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setSourceFilter(pill.value)}
-                  className={sourceFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                >
-                  {pill.label}
-                </button>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <label className="app-filter-field">
+            <span className="app-label">Source</span>
+            <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as SourceFilter)} className="app-select">
+              {sourcePills.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </div>
-          </div>
+            </select>
+          </label>
 
-          <div>
-            <span className="app-label text-xs">Website</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {websiteStatusPills.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setWebsiteStatusFilter(pill.value)}
-                  className={websiteStatusFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                >
-                  {pill.label}
-                </button>
+          <label className="app-filter-field">
+            <span className="app-label">Website</span>
+            <select
+              value={websiteStatusFilter}
+              onChange={(event) => setWebsiteStatusFilter(event.target.value as WebsiteStatusFilter)}
+              className="app-select"
+            >
+              {websiteStatusPills.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </div>
-          </div>
+            </select>
+          </label>
 
-          <div>
-            <span className="app-label text-xs">Restaurant enrichment</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {restaurantEnrichmentPills.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setRestaurantEnrichmentFilter(pill.value)}
-                  className={restaurantEnrichmentFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                >
-                  {pill.label}
-                </button>
+          <label className="app-filter-field">
+            <span className="app-label">Contactability</span>
+            <select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as ContactFilter)} className="app-select">
+              {contactFilterPills.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </div>
-          </div>
+            </select>
+          </label>
 
-          <div>
-            <span className="app-label text-xs">Contactability</span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {contactFilterPills.map((pill) => (
-                <button
-                  key={pill.value}
-                  type="button"
-                  onClick={() => setContactFilter(pill.value)}
-                  className={contactFilter === pill.value ? "option-card option-card-active py-2" : "option-card py-2"}
-                >
-                  {pill.label}
-                </button>
+          <label className="app-filter-field">
+            <span className="app-label">Restaurant and delivery</span>
+            <select
+              value={restaurantEnrichmentFilter}
+              onChange={(event) => setRestaurantEnrichmentFilter(event.target.value as RestaurantEnrichmentFilter)}
+              className="app-select"
+            >
+              {restaurantEnrichmentPills.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </div>
-          </div>
+            </select>
+          </label>
         </div>
       </section>
 
       {copyMessage ? (
-        <div className="rounded-[10px] border border-[rgba(52,211,153,0.28)] bg-[rgba(52,211,153,0.12)] px-4 py-3 text-sm text-[var(--success)]">{copyMessage}</div>
+        <div className="app-alert app-alert-info">{copyMessage}</div>
       ) : null}
 
-      {error ? <div className="rounded-[10px] border border-red-500/30 bg-red-500/[0.08] px-4 py-3 text-sm text-red-300">{error}</div> : null}
+      {error ? <div role="alert" className="app-alert app-alert-error">{error}</div> : null}
 
       {jobIdFilter ? (
-        <div className="rounded-[10px] border border-[rgba(124,92,252,0.28)] bg-[rgba(124,92,252,0.12)] px-4 py-3 text-sm text-[var(--accent)]">
-          Showing leads for job <span className="font-semibold">{jobIdFilter}</span>
+        <div className="app-alert app-alert-info">
+          Showing leads from the selected search.
         </div>
       ) : null}
 
@@ -1678,10 +1474,10 @@ export default function LeadsTable() {
               Sync selected to Sheets
             </button>
             <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
-              {exporting ? "Exporting..." : "Export CSV"}
+              {exporting ? "Exporting..." : "Export to CSV"}
             </button>
             <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "xlsx")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
-              {exporting ? "Exporting..." : "Export Excel"}
+              {exporting ? "Exporting..." : "Export to Excel"}
             </button>
             <button type="button" disabled={deleting} onClick={() => void deleteSelected()} className="btn-danger disabled:cursor-not-allowed disabled:opacity-60">
               <Trash2 className="h-4 w-4" />
@@ -1693,7 +1489,7 @@ export default function LeadsTable() {
 
       {!loading && !leads.length && !filtersActive ? (
         <section className="app-card flex min-h-[360px] flex-col items-center justify-center text-center">
-          <div className="rounded-[10px] border border-white/10 bg-white/[0.03] p-4">
+          <div className="rounded-2xl border border-blue-200 bg-[var(--primary-soft)] p-4">
             <Users className="h-8 w-8 text-[var(--text-secondary)]" />
           </div>
           <h2 className="mt-5 app-section-title">No leads yet</h2>
@@ -1715,14 +1511,15 @@ export default function LeadsTable() {
               <col style={{ width: "9%" }} />
               <col style={{ width: "96px" }} />
             </colgroup>
-            <thead className="border-b border-[var(--border)] bg-[rgba(255,255,255,0.02)] text-xs uppercase tracking-[0.05em] text-[var(--text-secondary)]">
+            <thead className="border-b border-[var(--border)] bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
               <tr>
                 <th className="px-4 py-3">
                   <input
                     type="checkbox"
                     checked={allVisibleSelected}
                     onChange={(event) => handleSelectAll(event.target.checked)}
-                    className="h-4 w-4 rounded border-white/20 bg-transparent text-[var(--accent)] focus:ring-[var(--accent)]"
+                    className="app-checkbox"
+                    aria-label="Select all visible leads"
                   />
                 </th>
                 <th className="px-4 py-3 font-medium">Lead</th>
@@ -1738,9 +1535,9 @@ export default function LeadsTable() {
                 Array.from({ length: 5 }, (_, index) => (
                   <tr key={`skeleton-${index}`} className="border-b border-[var(--border)]">
                     <td colSpan={7} className="px-4 py-4">
-                      <div className="animate-pulse space-y-3">
-                        <div className="h-4 w-40 rounded bg-white/10" />
-                        <div className="h-4 w-full rounded bg-white/10" />
+                      <div className="space-y-3">
+                        <div className="app-skeleton h-4 w-40" />
+                        <div className="app-skeleton h-4 w-full" />
                       </div>
                     </td>
                   </tr>
@@ -1782,12 +1579,12 @@ export default function LeadsTable() {
                 <tr>
                   <td colSpan={7} className="px-4 py-16 text-center text-[var(--text-secondary)]">
                     <div className="mx-auto max-w-md">
-                      <h2 className="text-lg font-semibold text-white">No leads match these filters</h2>
+                      <h2 className="text-lg font-semibold text-[var(--text-primary)]">No leads match these filters</h2>
                       <p className="mt-2 text-sm text-[var(--text-secondary)]">
                         Try changing the source, website, or restaurant enrichment filter.
                       </p>
                       <button type="button" onClick={clearFilters} className="btn-secondary mt-5 justify-center">
-                        Clear filters
+                        Reset filters
                       </button>
                     </div>
                   </td>

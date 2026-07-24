@@ -5,14 +5,41 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        brand: {
+          50: "#EFF6FF",
+          100: "#DBEAFE",
+          500: "#1463FF",
+          600: "#0B4FDB",
+          700: "#093FAF",
+        },
+        navy: {
+          900: "#0B1635",
+          800: "#17264A",
+        },
+        surface: {
+          DEFAULT: "#FFFFFF",
+          soft: "#F1F6FF",
+          page: "#F7FAFF",
+        },
         ink: {
-          950: "#050816",
-          900: "#0b1020",
-          800: "#141b2e",
+          950: "#0B1635",
+          900: "#17264A",
+          800: "#334155",
         },
       },
+      fontFamily: {
+        sans: ["var(--font-manrope)", "ui-sans-serif", "system-ui", "sans-serif"],
+      },
+      borderRadius: {
+        control: "13px",
+        card: "20px",
+        modal: "24px",
+      },
       boxShadow: {
-        glow: "0 0 0 1px rgba(255,255,255,0.08), 0 24px 80px rgba(15,23,42,0.45)",
+        subtle: "0 1px 2px rgba(11,22,53,0.04)",
+        card: "0 8px 24px rgba(20,99,255,0.06)",
+        elevated: "0 16px 40px rgba(11,22,53,0.10)",
+        glow: "0 8px 24px rgba(20,99,255,0.12)",
       },
     },
   },

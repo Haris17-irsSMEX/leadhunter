@@ -2,295 +2,298 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRight,
-  BarChart3,
+  BadgeCheck,
+  BriefcaseBusiness,
   Building2,
   Check,
-  ChevronDown,
+  CheckCircle2,
   ClipboardCheck,
   Download,
+  ExternalLink,
   FileSpreadsheet,
+  Filter,
   Globe2,
+  Layers3,
   Mail,
   MapPin,
-  Menu,
+  Phone,
   Search,
+  Sheet,
   ShieldCheck,
-  Sparkles,
   TableProperties,
-  Users,
-  Zap,
+  Target,
+  Utensils,
 } from "lucide-react";
+import PublicFooter from "@/components/public/PublicFooter";
+import PublicHeader from "@/components/public/PublicHeader";
+import { PLAN_NAMES, PLANS, type PlanName } from "@/lib/plans";
 
 const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
-const demoLink = `mailto:${supportEmail}?subject=LeadHunter%20Demo%20Request`;
-const agencyLink = `mailto:${supportEmail}?subject=LeadHunter%20Agency%20Plan`;
-const serviceAccountEmail = "leadhunter-sheets@leadhunter-498411.iam.gserviceaccount.com";
+const signupHref = "/login?mode=signup";
+const demoHref = `mailto:${supportEmail}?subject=LeadHunter%20Demo%20Request`;
 
 export const metadata: Metadata = {
-  title: "LeadHunter - Build Targeted Lead Lists Faster",
+  title: {
+    absolute: "LeadHunter - Build Targeted Local Lead Lists",
+  },
   description:
-    "Find business leads from Google Maps and startup communities, organize them, and export them to CSV, Excel, or Google Sheets.",
+    "Find local businesses by niche and city, collect useful public contact information, avoid duplicates, and export clean lead lists to Google Sheets, CSV, or Excel.",
   alternates: {
-    canonical: "https://leadhunter.irssmex.com",
+    canonical: "/",
+  },
+  openGraph: {
+    title: "LeadHunter - Build Targeted Local Lead Lists",
+    description:
+      "Find local businesses by niche and city, collect useful public contact information, avoid duplicates, and export clean lead lists.",
+    type: "website",
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "LeadHunter - Build Targeted Local Lead Lists",
+    description: "Turn public business information into organized, export-ready lead lists.",
   },
 };
 
-const navLinks = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how-it-works" },
-  { label: "Google Sheets", href: "#google-sheets" },
-  { label: "Pricing", href: "#pricing" },
-  { label: "FAQ", href: "#faq" },
+const audiences = [
+  "Marketing agencies",
+  "Lead-generation agencies",
+  "Freelancers",
+  "Web developers",
+  "SEO teams",
+  "Appointment setters",
+  "Outbound sales teams",
 ];
 
-const features = [
+const manualTasks = [
+  "Searching Google Maps repeatedly",
+  "Opening business websites one by one",
+  "Copying phone numbers and locations",
+  "Looking for public emails or contact pages",
+  "Cleaning inconsistent spreadsheets",
+  "Removing businesses already saved",
+];
+
+const workflow = [
   {
-    icon: MapPin,
-    title: "Google Maps lead discovery",
-    copy: "Collect public business names, websites, phone numbers, addresses, categories, and source details by niche, location, and website status.",
+    icon: Target,
+    number: "01",
+    title: "Choose a niche and city",
+    copy: "Define the local market you want to research, such as dentists in Los Angeles.",
   },
   {
-    icon: Globe2,
-    title: "Website-status targeting",
-    copy: "Filter Google Maps results by all businesses, businesses with websites, or businesses with no website listed.",
+    icon: ClipboardCheck,
+    number: "02",
+    title: "Collect useful business information",
+    copy: "Save business names, websites, phones, locations, and public contact information when available.",
   },
   {
-    icon: TableProperties,
-    title: "Central lead workspace",
-    copy: "Search, filter, review, expand, copy, open, and clean up saved prospects from one focused workspace.",
+    icon: Filter,
+    number: "03",
+    title: "Filter and organize",
+    copy: "Use source, website, contactability, and relevant restaurant-platform filters while avoiding duplicate leads.",
   },
   {
     icon: Download,
-    title: "CSV and Excel export",
-    copy: "Move a full list or selected leads into the formats your outreach workflow already uses.",
-  },
-  {
-    icon: FileSpreadsheet,
-    title: "Google Sheets sync",
-    copy: "Send recent, selected, or all saved leads to the spreadsheet and tab your team chooses.",
-  },
-  {
-    icon: Globe2,
-    title: "Community intent leads",
-    copy: "Find public Hacker News launches, hiring signals, and discussions that show timely business intent.",
-  },
-  {
-    icon: Mail,
-    title: "Optional email enrichment",
-    copy: "Search public contact and about pages when a business website is available. Results are not guaranteed.",
-  },
-  {
-    icon: MapPin,
-    title: "Restaurant campaign enrichment",
-    copy: "For restaurant campaigns, check public website emails where available and delivery-platform presence across major US and UK platforms.",
+    number: "04",
+    title: "Export and start outreach",
+    copy: "Move the list into Google Sheets, CSV, or Excel for the outreach process your team already uses.",
   },
 ];
 
-const audiences = [
-  ["Marketing agencies", "Build targeted lists by niche, city, source, and website status for focused client campaigns."],
-  ["Web developers", "Find businesses with no website listed and pitch website, SEO, or digital services."],
-  ["SEO agencies", "Identify local businesses by category and location before preparing audit or outreach workflows."],
-  ["Freelancers", "Create focused prospect lists without copying business details across browser tabs."],
-  ["Lead generation teams", "Turn repetitive business research into an organized, export-ready workflow."],
-  ["Appointment setters", "Keep fresh prospects in one place before moving them into an outreach process."],
-  ["Outbound sales teams", "Explore local businesses and startup signals before exporting clean outreach lists."],
+const nicheExamples = [
+  ["Dentists", "Los Angeles"],
+  ["Roofers", "Boston"],
+  ["Restaurants", "London"],
+  ["Gyms", "New York"],
+  ["Salons", "Manchester"],
+  ["Marketing agencies", "Miami"],
 ];
 
-const campaignCards = [
-  {
-    title: "Find businesses without websites.",
-    copy: "Filter Google Maps results to find local businesses with no website listed, then pitch website, SEO, or digital services.",
-  },
-  {
-    title: "Build outreach lists for any niche.",
-    copy: "Search by business type and location, save qualified leads, and export them to CSV, Excel, or Google Sheets.",
-  },
-  {
-    title: "Useful for restaurant and local-service campaigns.",
-    copy: "Find restaurants and local businesses by city, category, website status, phone number, and source.",
-  },
-  {
-    title: "Restaurant campaign enrichment.",
-    copy: "Scrape restaurants from Google Maps, find public website emails where available, and check public delivery-platform presence across Uber Eats, DoorDash, Grubhub, Deliveroo, and Just Eat.",
-  },
+const leadFields = [
+  ["Business name", Building2],
+  ["Website", Globe2],
+  ["Phone number", Phone],
+  ["Location", MapPin],
+  ["Industry or category", Layers3],
+  ["Public email when available", Mail],
+  ["Public contact page", ExternalLink],
+  ["Website status and source", Filter],
+  ["Scrape date", ClipboardCheck],
 ];
 
-const pricing = [
-  {
-    name: "Free",
-    price: "$0",
-    note: "For trying the core workflow",
-    features: ["25 leads per month", "Google Maps lead discovery", "Hacker News community leads", "Saved leads", "CSV export"],
-    cta: "Start Free",
-    href: "/login",
-  },
-  {
-    name: "Starter",
-    price: "$19",
-    suffix: "/month",
-    note: "For regular prospecting",
-    features: ["500 leads per month", "Google Maps and supported lead sources", "CSV and Excel export", "Saved lead workspace"],
-    cta: "Get Early Access",
-    href: "/login",
-  },
-  {
-    name: "Pro",
-    price: "$49",
-    suffix: "/month",
-    note: "For active outbound teams",
-    features: ["2,500 leads per month", "Google Sheets sync", "Optional email enrichment", "Advanced lead filters", "Priority support"],
-    cta: "Get Early Access",
-    href: "/login",
-    featured: true,
-  },
-  {
-    name: "Agency",
-    price: "$99",
-    suffix: "/month",
-    note: "For higher-volume workflows",
-    features: ["10,000 leads per month", "Higher-volume prospecting", "Google Sheets workflows", "Priority onboarding", "Agency-focused support"],
-    cta: "Book a Demo",
-    href: agencyLink,
-  },
+const agencyUseCases = [
+  ["Local-business prospecting", "Research businesses by service category and location before building a focused campaign."],
+  ["Website development outreach", "Find listings without a website attached and prioritize prospects for web-design conversations."],
+  ["SEO campaigns", "Create niche and city lists for local SEO audits, reviews, and service outreach."],
+  ["Marketing-service outreach", "Organize relevant businesses before offering paid media, content, or growth services."],
+  ["Lead-generation campaigns", "Build clean client-ready lists with source details and duplicate prevention."],
+  ["Appointment-setting campaigns", "Give setters structured contact options including email, contact page, phone, and website."],
 ];
 
-const faqs = [
+const planFeatures: Record<PlanName, string[]> = {
+  free: ["Google Maps lead discovery", "Hacker News community leads", "Saved lead workspace", "CSV export"],
+  starter: ["Supported lead sources", "CSV and Excel export", "Website-status filters", "Saved lead workspace"],
+  pro: ["Google Sheets sync", "Public email discovery", "Advanced lead filters", "Priority support"],
+  agency: ["Higher-volume prospecting", "Google Sheets workflows", "Restaurant campaign filters", "Priority onboarding"],
+};
+
+const faqItems = [
   [
     "What is LeadHunter?",
-    "LeadHunter helps agencies and outbound teams discover public business leads, organize promising prospects, and export them for outreach.",
+    "LeadHunter is a workspace for finding public local-business information, organizing relevant prospects, avoiding duplicate saved leads, and exporting clean lists for outreach.",
   ],
   [
     "What information can it find?",
-    "Depending on the source, LeadHunter can collect public business names, websites, phone numbers, addresses, categories, descriptions, source links, and community intent signals.",
+    "Available fields can include business name, website, phone, location, category, source, public email, and public contact page. The exact information depends on the public source.",
   ],
   [
-    "Does LeadHunter always find emails?",
-    "No. Email enrichment searches public website pages when a website is available. Some businesses do not publish an email address, so results are not guaranteed.",
+    "Does every lead include an email?",
+    "No. LeadHunter finds public emails and contact pages when available. Some businesses do not publish an email address.",
   ],
   [
-    "How does Google Sheets sync work?",
-    "Share your spreadsheet with the LeadHunter service account, enter the spreadsheet ID and tab name, then choose the saved leads you want to sync.",
+    "Can I find businesses without websites?",
+    "Yes. The No website filter finds businesses whose Google Maps listing does not include a website. It does not prove the business has no online presence elsewhere.",
   ],
   [
-    "Why must I share my spreadsheet with the LeadHunter service account?",
-    "Google Sheets only allows approved accounts to edit a spreadsheet. Editor access lets LeadHunter write the leads you explicitly choose into that sheet.",
+    "How does restaurant delivery-platform checking work?",
+    "For selected restaurant campaigns, LeadHunter checks public search results for delivery-platform presence and stores public listing URLs when found. These signals may require verification.",
   ],
   [
-    "Where do I find my spreadsheet ID?",
-    "It is the long value between /d/ and /edit in the Google Sheets URL.",
+    "Does LeadHunter avoid duplicates?",
+    "LeadHunter uses stable business or source identifiers where available and avoids repeatedly saving the same lead into one user's workspace.",
   ],
   [
-    "Which sources currently work best?",
-    "Google Maps and Hacker News are the most reliable early-access sources. Additional community and website sources depend on their provider availability.",
+    "Can I export to Google Sheets?",
+    "Yes. You can sync matching saved leads to a Google Sheet, or export customer-friendly CSV and Excel files.",
   ],
   [
-    "Is outreach automated?",
-    "No. LeadHunter helps users discover, organize, and export public lead data. Users remain responsible for their outreach and compliance.",
+    "Which cities and countries can I search?",
+    "You can search local niches across many cities and countries supported by the underlying public data provider. Result quantity and field availability vary by location.",
   ],
-  ["Do I need a credit card for early access?", "No. A credit card is not required to create a free early-access account."],
-  ["Can I book a demo?", "Yes. Use the Book Demo link to email the irsSMEX team and arrange a walkthrough."],
+  [
+    "Is LinkedIn scraping included?",
+    "No. LinkedIn scraping is not currently included.",
+  ],
+  [
+    "Is LeadHunter affiliated with Google Maps or delivery platforms?",
+    "No. LeadHunter is not affiliated with or endorsed by Google Maps, Uber Eats, DoorDash, Grubhub, Deliveroo, Just Eat, or other third-party platforms.",
+  ],
 ];
 
-function Brand() {
+function envEnabled(name: string, fallback: boolean) {
+  const value = process.env[name];
+  return value === undefined ? fallback : value.trim().toLowerCase() === "true";
+}
+
+function getEnabledCommunitySources() {
+  if (!envEnabled("COMMUNITIES_ENABLED", false)) {
+    return [];
+  }
+
+  return [
+    envEnabled("HACKERNEWS_ENABLED", true) ? "Hacker News" : null,
+    envEnabled("REDDIT_ENABLED", true) ? "Reddit prototype" : null,
+    envEnabled("INDIEHACKERS_ENABLED", false) ? "Indie Hackers" : null,
+    envEnabled("PRODUCTHUNT_ENABLED", false) ? "Product Hunt" : null,
+  ].filter((source): source is string => Boolean(source));
+}
+
+function SectionHeading({
+  eyebrow,
+  title,
+  copy,
+  centered = false,
+}: {
+  eyebrow: string;
+  title: string;
+  copy?: string;
+  centered?: boolean;
+}) {
   return (
-    <Link href="/" className="flex items-center gap-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-400">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[linear-gradient(135deg,#7C5CFC,#5B3FE0)] text-white shadow-[0_10px_35px_rgba(124,92,252,0.28)]">
-        <Zap className="h-5 w-5" />
-      </span>
-      <span className="text-lg font-bold tracking-[-0.02em] text-white">LeadHunter</span>
-    </Link>
+    <div className={centered ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
+      <p className="text-sm font-bold text-[var(--primary)]">{eyebrow}</p>
+      <h2 className="mt-3 text-3xl font-extrabold leading-tight tracking-[-0.04em] text-[var(--text-primary)] sm:text-4xl lg:text-5xl">
+        {title}
+      </h2>
+      {copy ? <p className="mt-5 text-base leading-7 text-[var(--text-secondary)] sm:text-lg">{copy}</p> : null}
+    </div>
   );
 }
 
 function ProductPreview() {
   return (
-    <div className="relative mx-auto mt-14 max-w-6xl">
-      <div className="absolute -inset-8 -z-10 rounded-[40px] bg-violet-500/10 blur-3xl" />
-      <div className="overflow-hidden rounded-[26px] border border-white/10 bg-[#111522] shadow-[0_45px_120px_rgba(0,0,0,0.48)]">
-        <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 sm:px-7">
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
-            <span className="h-2.5 w-2.5 rounded-full bg-amber-300/70" />
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
+    <div className="relative mx-auto w-full max-w-[650px]">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -inset-8 -z-10 rounded-[40px] bg-[radial-gradient(circle,rgba(20,99,255,0.18),transparent_68%)] blur-2xl"
+      />
+      <div className="overflow-hidden rounded-[24px] border border-blue-100 bg-white shadow-[0_24px_70px_rgba(20,99,255,0.14)]">
+        <div className="flex items-center justify-between border-b border-[var(--border-default)] px-5 py-4">
+          <div>
+            <p className="text-sm font-bold text-[var(--text-primary)]">Google Maps Finder</p>
+            <p className="mt-0.5 text-xs text-[var(--text-muted)]">Illustrative product preview</p>
           </div>
-          <span className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-slate-400">
-            Google Maps finder
+          <span className="app-badge badge-info">
+            <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+            Local search
           </span>
         </div>
 
-        <div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[0.8fr_0.8fr_0.4fr_0.5fr_auto] lg:items-end">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Business type</span>
-            <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
-              Web design agencies
-            </span>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Location</span>
-            <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
-              Austin, Texas
-            </span>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Results</span>
-            <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
-              20
-            </span>
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Website filter</span>
-            <span className="mt-2 flex h-12 items-center rounded-xl border border-white/10 bg-[#090c14] px-4 text-sm text-white">
-              No website
-            </span>
-          </label>
-          <span className="flex h-12 items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 text-sm font-semibold text-white">
-            <Search className="h-4 w-4" />
-            Search &amp; Scrape
-          </span>
+        <div className="grid gap-3 bg-[var(--surface-secondary)] p-4 sm:grid-cols-2 sm:p-5">
+          <div className="rounded-xl border border-[var(--border-default)] bg-white p-3">
+            <p className="text-[11px] font-bold text-[var(--text-muted)]">BUSINESS TYPE</p>
+            <p className="mt-1.5 text-sm font-semibold text-[var(--text-primary)]">Dentists</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border-default)] bg-white p-3">
+            <p className="text-[11px] font-bold text-[var(--text-muted)]">LOCATION</p>
+            <p className="mt-1.5 text-sm font-semibold text-[var(--text-primary)]">Los Angeles, CA</p>
+          </div>
+          <div className="rounded-xl border border-[var(--border-default)] bg-white p-3">
+            <p className="text-[11px] font-bold text-[var(--text-muted)]">WEBSITE FILTER</p>
+            <p className="mt-1.5 text-sm font-semibold text-[var(--text-primary)]">All businesses</p>
+          </div>
+          <div className="flex min-h-[62px] items-center justify-center rounded-xl bg-[var(--primary)] px-4 text-sm font-bold text-white shadow-[0_8px_20px_rgba(20,99,255,0.20)]">
+            <Search className="mr-2 h-4 w-4" aria-hidden="true" />
+            Search and save leads
+          </div>
         </div>
 
-        <div className="border-t border-white/10">
-          <div className="flex flex-col gap-3 border-b border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+        <div className="p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-white">Lead results</p>
-              <p className="mt-1 text-xs text-slate-500">Public business details saved to your workspace</p>
+              <p className="text-sm font-bold text-[var(--text-primary)]">Saved business information</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Public fields appear when available.</p>
             </div>
-            <div className="flex gap-2">
-              <span className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">Export CSV</span>
-              <span className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">Sync to Sheets</span>
-            </div>
+            <span className="badge-hot">Duplicate-safe workspace</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-[720px] w-full text-left text-sm">
-              <thead className="bg-black/15 text-[11px] uppercase tracking-[0.08em] text-slate-500">
-                <tr>
-                  <th className="px-7 py-3 font-medium">Company</th>
-                  <th className="px-5 py-3 font-medium">Location</th>
-                  <th className="px-5 py-3 font-medium">Website</th>
-                  <th className="px-5 py-3 font-medium">Source</th>
-                  <th className="px-7 py-3 text-right font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.07]">
-                {[
-                  ["Northline Studio", "Austin, TX", "northlinestudio.com"],
-                  ["Signal Creative", "Austin, TX", "signalcreative.co"],
-                  ["Cedar Digital", "Round Rock, TX", "cedardigital.com"],
-                ].map(([company, location, website]) => (
-                  <tr key={company}>
-                    <td className="px-7 py-4 font-medium text-white">{company}</td>
-                    <td className="px-5 py-4 text-slate-400">{location}</td>
-                    <td className="px-5 py-4 text-slate-400">{website}</td>
-                    <td className="px-5 py-4">
-                      <span className="whitespace-nowrap rounded-lg border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs text-emerald-300">
-                        Google Maps
-                      </span>
-                    </td>
-                    <td className="px-7 py-4 text-right text-xs text-slate-500">Saved</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          <div className="mt-4 grid gap-3">
+            {[
+              { name: "Example dental practice", contact: "Website and phone available", email: "Public email found" },
+              { name: "Example local clinic", contact: "Phone and contact page available", email: "Contact form available" },
+            ].map((lead) => (
+              <div
+                key={lead.name}
+                className="grid gap-3 rounded-2xl border border-[var(--border-default)] p-4 sm:grid-cols-[1.15fr_1fr_auto] sm:items-center"
+              >
+                <div>
+                  <p className="text-sm font-bold text-[var(--text-primary)]">{lead.name}</p>
+                  <p className="mt-1 text-xs text-[var(--text-muted)]">Google Maps source</p>
+                </div>
+                <p className="text-xs font-medium text-[var(--text-secondary)]">{lead.contact}</p>
+                <span className="badge-hot justify-self-start">{lead.email}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--border-default)] pt-4">
+            <span className="btn-secondary min-h-9 px-3 py-1.5 text-xs">Export to CSV</span>
+            <span className="btn-secondary min-h-9 px-3 py-1.5 text-xs">Export to Excel</span>
+            <span className="btn-primary min-h-9 px-3 py-1.5 text-xs">
+              <Sheet className="h-3.5 w-3.5" aria-hidden="true" />
+              Sync to Google Sheets
+            </span>
           </div>
         </div>
       </div>
@@ -299,368 +302,477 @@ function ProductPreview() {
 }
 
 export default function HomePage() {
+  const enabledCommunitySources = getEnabledCommunitySources();
+
   return (
-    <main className="min-h-screen overflow-hidden bg-[#080a12] text-white">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.07] bg-[#080a12]/85 backdrop-blur-xl">
-        <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
-          <Brand />
-          <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary navigation">
-            {navLinks.map((link) => (
-              <a key={link.href} href={link.href} className="text-sm text-slate-400 transition hover:text-white">
-                {link.label}
-              </a>
-            ))}
-          </nav>
-          <div className="hidden items-center gap-3 sm:flex">
-            <a href={demoLink} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/[0.05]">
-              Book Demo
-            </a>
-            <Link href="/login" className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500">
-              Get Early Access
-            </Link>
-          </div>
-          <details className="group relative sm:hidden">
-            <summary className="flex h-10 w-10 cursor-pointer list-none items-center justify-center rounded-xl border border-white/10 text-slate-300">
-              <Menu className="h-5 w-5" />
-              <span className="sr-only">Open navigation</span>
-            </summary>
-            <div className="absolute right-0 top-12 w-64 rounded-2xl border border-white/10 bg-[#121625] p-3 shadow-2xl">
-              {navLinks.map((link) => (
-                <a key={link.href} href={link.href} className="block rounded-xl px-3 py-2.5 text-sm text-slate-300 hover:bg-white/[0.05]">
-                  {link.label}
-                </a>
-              ))}
-              <a href={demoLink} className="mt-2 block rounded-xl px-3 py-2.5 text-sm text-slate-300 hover:bg-white/[0.05]">
-                Book Demo
-              </a>
-              <Link href="/login" className="mt-2 block rounded-xl bg-violet-600 px-3 py-2.5 text-center text-sm font-semibold">
-                Get Early Access
-              </Link>
-            </div>
-          </details>
-        </div>
-      </header>
+    <div className="min-h-screen overflow-x-clip bg-[var(--page-background)] text-[var(--text-primary)]">
+      <PublicHeader signupHref={signupHref} />
 
-      <section className="relative px-4 pb-24 pt-36 sm:px-6 sm:pt-44 lg:px-8">
-        <div className="pointer-events-none absolute inset-0 -z-0 bg-[radial-gradient(circle_at_50%_0%,rgba(124,92,252,0.18),transparent_38%),radial-gradient(circle_at_15%_45%,rgba(33,211,163,0.06),transparent_25%)]" />
-        <div className="relative mx-auto max-w-7xl">
-          <div className="mx-auto max-w-4xl text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-violet-400/20 bg-violet-400/[0.08] px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-violet-200">
-              <Sparkles className="h-3.5 w-3.5" />
-              Lead discovery for agencies and outbound teams
-            </span>
-            <h1 className="mt-7 text-balance text-5xl font-semibold leading-[0.98] tracking-[-0.055em] sm:text-6xl lg:text-[78px]">
-              Build targeted lead lists in minutes, not hours.
-            </h1>
-            <p className="mx-auto mt-7 max-w-2xl text-pretty text-lg leading-8 text-slate-400 sm:text-xl">
-              Search Google Maps and startup communities, save the best prospects, and export them to CSV, Excel, or Google Sheets.
-            </p>
-            <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row">
-              <Link href="/login" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-violet-600 px-6 text-sm font-semibold transition hover:bg-violet-500">
-                Get Early Access
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <a href={demoLink} className="inline-flex h-12 items-center justify-center rounded-xl border border-white/10 px-6 text-sm font-semibold transition hover:bg-white/[0.05]">
-                Book a Demo
-              </a>
-            </div>
-            <p className="mt-4 text-sm text-slate-500">No credit card required during early access.</p>
-          </div>
-          <ProductPreview />
-        </div>
-      </section>
-
-      <section className="border-y border-white/[0.07] bg-white/[0.018] px-4 py-20 sm:px-6 lg:px-8">
-        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">The manual-list problem</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em]">Stop building lead lists by hand.</h2>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {[
-              "Copying companies from Google Maps takes hours.",
-              "Research gets scattered across tabs and spreadsheets.",
-              "Teams repeat the same searches and manual cleanup.",
-              "Export and organization become another task to manage.",
-            ].map((item) => (
-              <div key={item} className="flex gap-3 rounded-2xl border border-white/[0.07] bg-[#0d101a] p-5 text-sm leading-6 text-slate-300">
-                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-violet-400" />
-                {item}
+      <main>
+        <section className="relative overflow-hidden border-b border-[var(--border-default)] bg-white">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_5%,rgba(20,99,255,0.13),transparent_32%),radial-gradient(circle_at_8%_68%,rgba(14,165,233,0.06),transparent_30%)]"
+          />
+          <div className="relative mx-auto grid max-w-[1440px] gap-14 px-4 pb-20 pt-16 sm:px-6 sm:pb-24 sm:pt-20 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8 lg:py-28">
+            <div className="max-w-2xl">
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-[var(--primary-soft)] px-3.5 py-2 text-xs font-bold text-[var(--primary)]">
+                <MapPin className="h-4 w-4" aria-hidden="true" />
+                Local-business lead research for practical outreach
+              </span>
+              <h1 className="mt-6 text-[42px] font-extrabold leading-[1.02] tracking-[-0.055em] text-[var(--text-primary)] sm:text-6xl lg:text-[68px]">
+                Build targeted local lead lists in minutes.
+              </h1>
+              <p className="mt-6 max-w-xl text-lg leading-8 text-[var(--text-secondary)]">
+                Find businesses in almost any niche and city, collect useful contact information, avoid duplicate
+                leads, and export clean lists for outreach.
+              </p>
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                <Link href={signupHref} className="btn-primary h-12 px-6">
+                  Start free
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+                <Link href="#how-it-works" className="btn-secondary h-12 px-6">
+                  See how it works
+                </Link>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+              <p className="mt-4 text-sm font-medium text-[var(--text-muted)]">
+                No credit card required | Free plan includes {PLANS.free.monthlyLeadLimit.toLocaleString()} leads per
+                month
+              </p>
+            </div>
 
-      <section id="how-it-works" className="scroll-mt-24 px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="max-w-2xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">How it works</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">From target market to outreach-ready list.</h2>
+            <ProductPreview />
           </div>
-          <div className="mt-12 grid gap-5 lg:grid-cols-3">
-            {[
-              ["01", Search, "Search", "Choose a business type, location, directory, website, or community source."],
-              ["02", ClipboardCheck, "Save", "LeadHunter collects public business details and saves them to your lead workspace."],
-              ["03", Download, "Export", "Send your leads to CSV, Excel, or Google Sheets for outreach."],
-            ].map(([step, Icon, title, copy]) => {
-              const StepIcon = Icon as typeof Search;
-              return (
-                <article key={String(title)} className="relative overflow-hidden rounded-[24px] border border-white/[0.08] bg-[#111522] p-7">
-                  <span className="absolute right-5 top-3 text-6xl font-bold text-white/[0.035]">{String(step)}</span>
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-500/10 text-violet-300">
-                    <StepIcon className="h-5 w-5" />
-                  </span>
-                  <h3 className="mt-8 text-xl font-semibold">{String(title)}</h3>
-                  <p className="mt-3 leading-7 text-slate-400">{String(copy)}</p>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <section id="features" className="scroll-mt-24 border-y border-white/[0.07] bg-white/[0.018] px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="mx-auto max-w-3xl text-center">
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">A focused lead workflow</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">The useful parts of prospecting, in one place.</h2>
-          </div>
-          <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {features.map(({ icon: Icon, title, copy }) => (
-              <article key={title} className="rounded-[22px] border border-white/[0.08] bg-[#0d101a] p-6 transition hover:border-violet-400/25">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-violet-300">
-                  <Icon className="h-5 w-5" />
+        <section aria-labelledby="audience-heading" className="border-b border-[var(--border-default)] bg-white">
+          <div className="mx-auto max-w-[1440px] px-4 py-10 sm:px-6 lg:px-8">
+            <h2 id="audience-heading" className="text-center text-sm font-bold text-[var(--text-secondary)]">
+              Built for teams that turn focused research into outreach
+            </h2>
+            <div className="mt-5 flex flex-wrap justify-center gap-2.5">
+              {audiences.map((audience) => (
+                <span
+                  key={audience}
+                  className="rounded-full border border-[var(--border-default)] bg-[var(--surface-secondary)] px-4 py-2 text-sm font-semibold text-[var(--navy-secondary)]"
+                >
+                  {audience}
                 </span>
-                <h3 className="mt-6 text-lg font-semibold">{title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-400">{copy}</p>
-              </article>
-            ))}
+              ))}
+            </div>
           </div>
-          <p className="mx-auto mt-8 max-w-2xl text-center text-sm text-slate-500">
-            Additional community sources are being expanded during early access.
-          </p>
-        </div>
-      </section>
+        </section>
 
-      <section className="px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="max-w-3xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">Practical use cases</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">Built for teams that always need fresh prospects.</h2>
-            <p className="mt-5 text-lg leading-8 text-slate-400">
-              Find restaurants, clinics, law firms, agencies, SaaS companies, or other target businesses by niche and location.
-            </p>
+        <section id="product" className="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto grid max-w-[1280px] gap-12 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
+            <SectionHeading
+              eyebrow="One focused workspace"
+              title="Stop building lead lists manually."
+              copy="LeadHunter brings the repetitive parts of local-business research into one organized workflow."
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              {manualTasks.map((task) => (
+                <div key={task} className="app-card flex min-h-[96px] items-start gap-3 p-4 shadow-[var(--shadow-small)]">
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
+                    <span aria-hidden="true">-</span>
+                  </span>
+                  <p className="text-sm font-medium leading-6 text-[var(--text-secondary)]">{task}</p>
+                </div>
+              ))}
+              <div className="app-alert app-alert-info sm:col-span-2">
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[var(--primary)]" aria-hidden="true" />
+                <p className="font-semibold">LeadHunter brings that workflow into one focused workspace.</p>
+              </div>
+            </div>
           </div>
-          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {audiences.map(([title, copy]) => (
-              <article key={title} className="rounded-[20px] border border-white/[0.08] bg-[#111522] p-5">
-                <Building2 className="h-5 w-5 text-violet-300" />
-                <h3 className="mt-5 font-semibold">{title}</h3>
-                <p className="mt-3 text-sm leading-6 text-slate-400">{copy}</p>
-              </article>
-            ))}
-          </div>
-          <div className="mt-8 grid gap-5 lg:grid-cols-3">
-            {campaignCards.map((card) => (
-              <article key={card.title} className="rounded-[22px] border border-white/[0.08] bg-[#0d101a] p-6">
-                <h3 className="text-lg font-semibold">{card.title}</h3>
-                <p className="mt-3 text-sm leading-7 text-slate-400">{card.copy}</p>
-              </article>
-            ))}
-          </div>
-          <p className="mt-8 max-w-3xl text-sm leading-7 text-slate-500">
-            Delivery-platform presence is based on public search signals and confidence scoring. It is not official verification.
-            Ratings and deeper delivery insights may be added later through compliant data sources or official integrations.
-          </p>
-        </div>
-      </section>
+        </section>
 
-      <section id="google-sheets" className="scroll-mt-24 border-y border-white/[0.07] bg-[#0d101a] px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto grid max-w-7xl gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-emerald-300">Google Sheets integration</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">Move leads directly into Google Sheets.</h2>
-            <p className="mt-6 text-lg leading-8 text-slate-400">
-              Send recent or saved leads into your spreadsheet so your team can begin outreach without copying and pasting rows manually.
-            </p>
-            <div className="mt-8 space-y-4">
-              {["Choose a spreadsheet", "Choose a sheet tab", "Sync selected or recent leads", "Replace a tab with all saved leads when needed"].map(
-                (item) => (
-                  <div key={item} className="flex items-center gap-3 text-sm text-slate-300">
-                    <Check className="h-4 w-4 text-emerald-400" />
-                    {item}
+        <section id="how-it-works" className="scroll-mt-24 border-y border-[var(--border-default)] bg-white px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[1280px]">
+            <SectionHeading
+              centered
+              eyebrow="Simple workflow"
+              title="From search to outreach in four steps."
+              copy="Keep research, filtering, and exports in one practical sequence."
+            />
+            <div className="relative mt-12 grid gap-4 lg:grid-cols-4">
+              <div aria-hidden="true" className="absolute left-[12%] right-[12%] top-9 hidden h-px bg-blue-200 lg:block" />
+              {workflow.map(({ icon: Icon, number, title, copy }) => (
+                <article key={number} className="relative rounded-[20px] border border-[var(--border-default)] bg-white p-6 shadow-[var(--shadow-card)]">
+                  <div className="flex items-center justify-between">
+                    <span className="relative z-10 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--primary)] text-white shadow-[0_8px_20px_rgba(20,99,255,0.18)]">
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span className="text-xs font-extrabold text-blue-300">{number}</span>
                   </div>
-                ),
+                  <h3 className="mt-5 text-lg font-bold text-[var(--text-primary)]">{title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{copy}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[1280px]">
+            <SectionHeading
+              eyebrow="Flexible local research"
+              title="Search almost any local niche in any city."
+              copy="Choose the market that matches your campaign. Result quantity and field availability depend on public source information."
+            />
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {nicheExamples.map(([niche, city]) => (
+                <article key={`${niche}-${city}`} className="app-card group flex items-center gap-4 transition hover:-translate-y-0.5 hover:border-blue-200">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]">
+                    <MapPin className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h3 className="font-bold text-[var(--text-primary)]">{niche}</h3>
+                    <p className="mt-1 text-sm text-[var(--text-secondary)]">{city}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-y border-[var(--border-default)] bg-white px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto grid max-w-[1280px] gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
+            <SectionHeading
+              eyebrow="Customer-facing lead data"
+              title="Useful lead data for practical outreach."
+              copy="Review the fields that are available, choose the best contact method, and keep the original source close at hand."
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              {leadFields.map(([label, Icon]) => {
+                const FieldIcon = Icon as typeof Building2;
+                return (
+                  <div key={String(label)} className="flex items-center gap-3 rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[var(--primary)] shadow-[var(--shadow-small)]">
+                      <FieldIcon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <p className="text-sm font-semibold text-[var(--navy-secondary)]">{String(label)}</p>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-sm text-[var(--text-muted)] lg:col-start-2">
+              Public contact information is not available for every business.
+            </p>
+          </div>
+        </section>
+
+        <section id="website-opportunity" className="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto grid max-w-[1280px] overflow-hidden rounded-[24px] border border-blue-100 bg-white shadow-[var(--shadow-card)] lg:grid-cols-2">
+            <div className="p-7 sm:p-10 lg:p-14">
+              <SectionHeading
+                eyebrow="For web developers and agencies"
+                title="Find businesses that may need a website."
+                copy="Find businesses whose Google Maps listing does not include a website, then build a focused prospect list for web, SEO, or digital-service outreach."
+              />
+              <ul className="mt-8 space-y-4">
+                {[
+                  "Search a niche and city",
+                  "Select the No website filter",
+                  "Save businesses that fit the campaign",
+                  "Use available phone or contact information",
+                  "Avoid businesses already saved in your workspace",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-3 text-sm leading-6 text-[var(--text-secondary)]">
+                    <Check className="mt-1 h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex items-center bg-[var(--surface-secondary)] p-6 sm:p-10">
+              <div className="w-full rounded-[20px] border border-blue-100 bg-white p-5 shadow-[var(--shadow-card)]">
+                <p className="text-xs font-bold text-[var(--text-muted)]">WEBSITE FILTER</p>
+                <div className="mt-4 grid gap-2">
+                  {["All businesses", "Has website", "No website"].map((filter) => (
+                    <div
+                      key={filter}
+                      className={`flex items-center justify-between rounded-xl border px-4 py-3 text-sm font-semibold ${
+                        filter === "No website"
+                          ? "border-blue-300 bg-[var(--primary-soft)] text-[var(--primary)]"
+                          : "border-[var(--border-default)] text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {filter}
+                      {filter === "No website" ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : null}
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 text-xs leading-5 text-[var(--text-muted)]">
+                  A missing Google Maps website does not prove the business has no online presence elsewhere.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="use-cases" className="scroll-mt-24 border-y border-[var(--border-default)] bg-white px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[1280px]">
+            <SectionHeading
+              centered
+              eyebrow="Agency use cases"
+              title="Built for the outreach services agencies already sell."
+              copy="Create focused prospect lists around real campaign goals instead of starting from an unstructured spreadsheet."
+            />
+            <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {agencyUseCases.map(([title, copy], index) => (
+                <article key={title} className="app-card">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--primary-soft)] text-[var(--primary)]">
+                    {index % 2 === 0 ? <BriefcaseBusiness className="h-5 w-5" /> : <Target className="h-5 w-5" />}
+                  </span>
+                  <h3 className="mt-5 text-lg font-bold text-[var(--text-primary)]">{title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{copy}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section id="restaurant-intelligence" className="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[1280px] overflow-hidden rounded-[26px] border border-blue-200 bg-[linear-gradient(135deg,#EFF6FF_0%,#FFFFFF_56%,#ECFDF3_130%)] p-7 shadow-[var(--shadow-card)] sm:p-10 lg:p-14">
+            <div className="grid gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+              <div>
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--primary)] text-white shadow-[0_8px_20px_rgba(20,99,255,0.18)]">
+                  <Utensils className="h-6 w-6" aria-hidden="true" />
+                </span>
+                <h2 className="mt-6 text-3xl font-extrabold tracking-[-0.04em] text-[var(--text-primary)] sm:text-4xl">
+                  Restaurant outreach with public delivery-platform signals.
+                </h2>
+                <p className="mt-5 text-base leading-7 text-[var(--text-secondary)]">
+                  Restaurant campaigns can find public website emails when available, check public delivery-platform
+                  presence, store public listing URLs, and filter matching leads before export.
+                </p>
+                <div className="app-alert app-alert-warning mt-6">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                  <p>Platform presence is based on publicly available search results and may require verification.</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-[20px] border border-[var(--border-default)] bg-white p-5 shadow-[var(--shadow-small)]">
+                  <p className="text-xs font-bold text-[var(--text-muted)]">USA-FOCUSED PLATFORMS</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {["Uber Eats", "DoorDash", "Grubhub"].map((platform) => (
+                      <span key={platform} className="badge-hot">{platform}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-[20px] border border-[var(--border-default)] bg-white p-5 shadow-[var(--shadow-small)]">
+                  <p className="text-xs font-bold text-[var(--text-muted)]">UK-FOCUSED PLATFORMS</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {["Uber Eats", "Deliveroo", "Just Eat"].map((platform) => (
+                      <span key={platform} className="badge-hot">{platform}</span>
+                    ))}
+                  </div>
+                </div>
+                {[
+                  "Search restaurant businesses",
+                  "Find public website emails when available",
+                  "Check selected public platform presence",
+                  "Store public listing or menu URLs",
+                  "Filter and export matching leads",
+                ].map((item) => (
+                  <div key={item} className="flex items-start gap-3 rounded-2xl border border-[var(--border-default)] bg-white p-4 sm:col-span-2">
+                    <BadgeCheck className="mt-0.5 h-5 w-5 shrink-0 text-[var(--success)]" aria-hidden="true" />
+                    <p className="text-sm font-semibold text-[var(--navy-secondary)]">{item}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="border-y border-[var(--border-default)] bg-white px-4 py-16 sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-[1100px] flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-2xl">
+              <p className="text-sm font-bold text-[var(--primary)]">Community intent leads</p>
+              <h2 className="mt-3 text-3xl font-extrabold tracking-[-0.035em] text-[var(--text-primary)]">
+                Discover opportunities beyond local directories.
+              </h2>
+              <p className="mt-4 leading-7 text-[var(--text-secondary)]">
+                Explore supported startup communities for public posts that may show buying intent. Community
+                availability depends on the source and provider configuration.
+              </p>
+            </div>
+            <div className="flex max-w-md flex-wrap gap-2">
+              {enabledCommunitySources.length ? (
+                enabledCommunitySources.map((source) => (
+                  <span key={source} className="app-badge badge-info">{source}</span>
+                ))
+              ) : (
+                <span className="badge-cold">Community sources are configuration-dependent</span>
               )}
             </div>
           </div>
+        </section>
 
-          <div className="rounded-[26px] border border-white/[0.08] bg-[#141927] p-5 shadow-2xl sm:p-7">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-300">
-                <FileSpreadsheet className="h-5 w-5" />
-              </span>
-              <div>
-                <p className="font-semibold">Connect your spreadsheet</p>
-                <p className="mt-1 text-xs text-slate-500">Four clear steps, no Google OAuth required</p>
+        <section id="exports" className="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto grid max-w-[1280px] gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
+            <SectionHeading
+              eyebrow="Move clean data forward"
+              title="Export clean lists and move faster."
+              copy="Export matching saved leads without exposing internal IDs or development fields."
+            />
+            <div className="grid gap-4 sm:grid-cols-3">
+              {[
+                ["Google Sheets", FileSpreadsheet, "Sync selected or filtered leads to the spreadsheet and tab you choose."],
+                ["CSV", TableProperties, "Download a UTF-8 customer-facing lead list for flexible workflows."],
+                ["Excel", Download, "Export a formatted workbook with clean columns and readable widths."],
+              ].map(([title, Icon, copy]) => {
+                const ExportIcon = Icon as typeof FileSpreadsheet;
+                return (
+                  <article key={String(title)} className="app-card">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--primary-soft)] text-[var(--primary)]">
+                      <ExportIcon className="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <h3 className="mt-5 text-lg font-bold text-[var(--text-primary)]">{String(title)}</h3>
+                    <p className="mt-3 text-sm leading-6 text-[var(--text-secondary)]">{String(copy)}</p>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="grid gap-3 text-sm text-[var(--text-secondary)] sm:grid-cols-2 lg:col-start-2">
+              {[
+                "Website-status filters",
+                "Public-email filters",
+                "Contactability filters",
+                "Delivery-platform filters for restaurant campaigns",
+                "Duplicate-safe saved workspace",
+                "Customer-facing columns",
+              ].map((item) => (
+                <p key={item} className="flex items-center gap-2">
+                  <Check className="h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
+                  {item}
+                </p>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section id="pricing" className="scroll-mt-24 border-y border-[var(--border-default)] bg-white px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[1280px]">
+            <SectionHeading
+              centered
+              eyebrow="Early-access plans"
+              title="Choose the allowance that fits your workflow."
+              copy="Self-serve billing is not connected yet. Start free or contact us about early-access plan changes."
+            />
+            <div className="mt-12 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {PLAN_NAMES.map((planName) => {
+                const plan = PLANS[planName];
+                const featured = planName === "pro";
+                const free = planName === "free";
+                const contactHref = `mailto:${supportEmail}?subject=LeadHunter%20${encodeURIComponent(plan.label)}%20Plan`;
+
+                return (
+                  <article
+                    key={planName}
+                    className={`relative flex flex-col rounded-[22px] border bg-white p-6 ${
+                      featured
+                        ? "border-blue-300 shadow-[0_18px_45px_rgba(20,99,255,0.12)]"
+                        : "border-[var(--border-default)] shadow-[var(--shadow-small)]"
+                    }`}
+                  >
+                    {featured ? (
+                      <span className="absolute right-5 top-5 rounded-full bg-[var(--primary-soft)] px-3 py-1 text-xs font-bold text-[var(--primary)]">
+                        For active teams
+                      </span>
+                    ) : null}
+                    <h3 className="text-lg font-bold text-[var(--text-primary)]">{plan.label}</h3>
+                    <p className="mt-5 text-4xl font-extrabold tracking-[-0.04em] text-[var(--text-primary)]">
+                      ${plan.price}
+                      {plan.price > 0 ? <span className="text-sm font-medium text-[var(--text-muted)]"> / month</span> : null}
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-[var(--primary)]">
+                      {plan.monthlyLeadLimit.toLocaleString()} leads per month
+                    </p>
+                    <ul className="mt-6 flex-1 space-y-3">
+                      {planFeatures[planName].map((feature) => (
+                        <li key={feature} className="flex items-start gap-2.5 text-sm leading-6 text-[var(--text-secondary)]">
+                          <Check className="mt-1 h-4 w-4 shrink-0 text-[var(--success)]" aria-hidden="true" />
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                    {free ? (
+                      <Link href={signupHref} className="btn-primary mt-7 w-full">
+                        Start free
+                      </Link>
+                    ) : (
+                      <a
+                        href={contactHref}
+                        className={`${featured ? "btn-primary" : "btn-secondary"} mt-7 w-full`}
+                      >
+                        Contact us
+                      </a>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        <section id="faq" className="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-24 lg:px-8">
+          <div className="mx-auto max-w-[900px]">
+            <SectionHeading
+              centered
+              eyebrow="Frequently asked questions"
+              title="Straight answers about how LeadHunter works."
+            />
+            <div className="mt-10 space-y-3">
+              {faqItems.map(([question, answer]) => (
+                <details key={question} className="group rounded-[18px] border border-[var(--border-default)] bg-white p-5 shadow-[var(--shadow-small)]">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-5 text-base font-bold text-[var(--text-primary)]">
+                    {question}
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--primary-soft)] text-[var(--primary)] transition group-open:rotate-45">
+                      <span aria-hidden="true">+</span>
+                    </span>
+                  </summary>
+                  <p className="mt-4 pr-10 text-sm leading-7 text-[var(--text-secondary)]">{answer}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="px-4 pb-20 sm:px-6 sm:pb-24 lg:px-8">
+          <div className="relative mx-auto max-w-[1200px] overflow-hidden rounded-[28px] bg-[var(--navy)] px-6 py-14 text-center shadow-[var(--shadow-elevated)] sm:px-10 sm:py-16">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_12%,rgba(20,99,255,0.55),transparent_34%),radial-gradient(circle_at_88%_90%,rgba(22,163,74,0.20),transparent_30%)]"
+            />
+            <div className="relative mx-auto max-w-3xl">
+              <h2 className="text-3xl font-extrabold tracking-[-0.04em] text-white sm:text-5xl">
+                Build your next lead list without the manual research.
+              </h2>
+              <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-blue-100">
+                Choose a niche, choose a city, and turn public business information into an organized outreach list.
+              </p>
+              <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+                <Link href={signupHref} className="btn-primary h-12 px-6">
+                  Start free
+                  <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                </Link>
+                <a
+                  href={demoHref}
+                  className="inline-flex h-12 items-center justify-center rounded-[13px] border border-white/25 bg-white/10 px-6 text-sm font-bold text-white transition hover:bg-white/15"
+                >
+                  Book a demo
+                </a>
               </div>
             </div>
-            <ol className="mt-7 grid gap-3">
-              {[
-                "Open the Google Sheet you want to use.",
-                `Share it with ${serviceAccountEmail} as an Editor.`,
-                "Copy the spreadsheet ID from its URL.",
-                "Paste the ID in LeadHunter and choose a tab.",
-              ].map((item, index) => (
-                <li key={item} className="flex gap-3 rounded-xl border border-white/[0.07] bg-black/15 p-4 text-sm leading-6 text-slate-300">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-violet-500/15 text-xs font-semibold text-violet-300">
-                    {index + 1}
-                  </span>
-                  {item}
-                </li>
-              ))}
-            </ol>
-            <div className="mt-5 rounded-xl border border-white/[0.08] bg-[#090c14] p-4 font-mono text-xs text-slate-500">
-              https://docs.google.com/spreadsheets/d/
-              <span className="rounded bg-violet-500/15 px-1.5 py-1 text-violet-200">SPREADSHEET_ID</span>
-              /edit
-            </div>
-            <details className="mt-4 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4">
-              <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-white">
-                Why is sharing required?
-                <ChevronDown className="h-4 w-4 text-slate-500" />
-              </summary>
-              <p className="mt-3 text-sm leading-6 text-slate-400">
-                Google Sheets only allows approved accounts to edit a spreadsheet. Sharing the spreadsheet with the LeadHunter service account gives LeadHunter permission to write your selected leads into that sheet.
-              </p>
-              <p className="mt-3 text-sm leading-6 text-slate-400">
-                The spreadsheet ID is the long value between <code>/d/</code> and <code>/edit</code>. It tells LeadHunter which spreadsheet to update.
-              </p>
-            </details>
           </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      <section id="pricing" className="scroll-mt-24 px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl">
-          <div className="mx-auto max-w-3xl text-center">
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">Early Access Pricing</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">Simple early-access pricing</h2>
-            <p className="mt-5 text-lg text-slate-400">Start free, then choose a plan that matches your monthly prospecting volume.</p>
-          </div>
-          <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-            {pricing.map((plan) => (
-              <article
-                key={plan.name}
-                className={`relative flex rounded-[24px] border p-6 ${
-                  plan.featured
-                    ? "border-violet-400/50 bg-violet-500/[0.08] shadow-[0_24px_80px_rgba(124,92,252,0.14)]"
-                    : "border-white/[0.08] bg-[#111522]"
-                }`}
-              >
-                <div className="flex w-full flex-col">
-                  {plan.featured ? (
-                    <span className="absolute right-5 top-5 rounded-full bg-violet-500 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.1em]">
-                      Most flexible
-                    </span>
-                  ) : null}
-                  <p className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-400">{plan.name}</p>
-                  <div className="mt-5 flex items-end gap-1">
-                    <span className="text-4xl font-semibold tracking-[-0.04em]">{plan.price}</span>
-                    {plan.suffix ? <span className="pb-1 text-sm text-slate-500">{plan.suffix}</span> : null}
-                  </div>
-                  <p className="mt-2 text-sm text-slate-500">{plan.note}</p>
-                  <ul className="mt-7 flex-1 space-y-3">
-                    {plan.features.map((feature) => (
-                      <li key={feature} className="flex gap-2.5 text-sm leading-6 text-slate-300">
-                        <Check className="mt-1 h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                  {plan.href.startsWith("mailto:") ? (
-                    <a href={plan.href} className="mt-8 inline-flex h-11 items-center justify-center rounded-xl border border-white/10 text-sm font-semibold transition hover:bg-white/[0.05]">
-                      {plan.cta}
-                    </a>
-                  ) : (
-                    <Link
-                      href={plan.href}
-                      className={`mt-8 inline-flex h-11 items-center justify-center rounded-xl text-sm font-semibold transition ${
-                        plan.featured ? "bg-violet-600 hover:bg-violet-500" : "border border-white/10 hover:bg-white/[0.05]"
-                      }`}
-                    >
-                      {plan.cta}
-                    </Link>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-          <p className="mx-auto mt-7 max-w-2xl text-center text-sm leading-6 text-slate-500">
-            Paid subscriptions will be activated during early access. Self-serve Paddle checkout is coming next.
-          </p>
-        </div>
-      </section>
-
-      <section id="faq" className="scroll-mt-24 border-y border-white/[0.07] bg-white/[0.018] px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto grid max-w-7xl gap-12 lg:grid-cols-[0.65fr_1.35fr]">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-violet-300">FAQ</p>
-            <h2 className="mt-4 text-4xl font-semibold tracking-[-0.04em]">Questions before you start?</h2>
-            <p className="mt-5 leading-7 text-slate-400">
-              LeadHunter is in early access. These answers describe the product as it works today.
-            </p>
-          </div>
-          <div className="space-y-3">
-            {faqs.map(([question, answer]) => (
-              <details key={question} className="group rounded-2xl border border-white/[0.08] bg-[#0d101a] p-5">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-medium">
-                  {question}
-                  <ChevronDown className="h-4 w-4 shrink-0 text-slate-500 transition group-open:rotate-180" />
-                </summary>
-                <p className="mt-4 pr-8 text-sm leading-7 text-slate-400">{answer}</p>
-              </details>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="px-4 py-24 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-6xl overflow-hidden rounded-[30px] border border-violet-400/20 bg-[radial-gradient(circle_at_20%_20%,rgba(124,92,252,0.24),transparent_45%),#121625] px-6 py-14 text-center sm:px-12">
-          <ShieldCheck className="mx-auto h-8 w-8 text-violet-300" />
-          <h2 className="mt-6 text-4xl font-semibold tracking-[-0.04em]">Turn your next market into an organized lead list.</h2>
-          <p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-slate-400">
-            Start with Google Maps, save the prospects worth reviewing, and export them when your team is ready.
-          </p>
-          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link href="/login" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-violet-600 px-6 text-sm font-semibold hover:bg-violet-500">
-              Get Early Access
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <a href={demoLink} className="inline-flex h-12 items-center justify-center rounded-xl border border-white/10 px-6 text-sm font-semibold hover:bg-white/[0.05]">
-              Book Demo
-            </a>
-          </div>
-        </div>
-      </section>
-
-      <footer className="border-t border-white/[0.08] px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-8 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <Brand />
-            <p className="mt-3 text-sm text-slate-500">LeadHunter by irsSMEX</p>
-          </div>
-          <div className="flex flex-wrap gap-x-6 gap-y-3 text-sm text-slate-400">
-            <a href="https://irssmex.com" target="_blank" rel="noreferrer" className="hover:text-white">irsSMEX</a>
-            <a href={`mailto:${supportEmail}`} className="hover:text-white">Contact</a>
-            <Link href="/login" className="hover:text-white">Get Early Access</Link>
-            <a href={demoLink} className="hover:text-white">Book Demo</a>
-            <Link href="/privacy" className="hover:text-white">Privacy</Link>
-            <Link href="/terms" className="hover:text-white">Terms</Link>
-          </div>
-        </div>
-      </footer>
-    </main>
+      <PublicFooter supportEmail={supportEmail} />
+    </div>
   );
 }
