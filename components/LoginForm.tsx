@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -19,28 +19,44 @@ import {
 import LeadHunterLogo from "@/components/branding/LeadHunterLogo";
 
 type AuthMode = "signin" | "signup";
+type AuthErrorDetails = {
+  message: string;
+  helper?: string;
+};
 
 function safeNextPath(value: string | null) {
   return value && value.startsWith("/") && !value.startsWith("//") ? value : "/dashboard";
 }
 
-function authErrorMessage(message: string | undefined, mode: AuthMode) {
+function authErrorDetails(message: string | undefined, mode: AuthMode, code?: string): AuthErrorDetails {
   const normalized = (message ?? "").toLowerCase();
 
+  if (mode === "signup" && code === "SIGNUP_RATE_LIMITED") {
+    return {
+      message: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+      helper: "If you already created the account, check your inbox or spam folder for the confirmation email.",
+    };
+  }
+
   if (normalized.includes("invalid login credentials")) {
-    return "The email or password is incorrect.";
+    return { message: "The email or password is incorrect." };
   }
 
   if (normalized.includes("email not confirmed")) {
-    return "Confirm your email address before signing in.";
+    return { message: "Confirm your email address before signing in." };
   }
 
   if (normalized.includes("already registered") || normalized.includes("already exists")) {
-    return "An account with this email already exists. Try signing in instead.";
+    return { message: "An account with this email already exists. Try signing in instead." };
   }
 
   if (normalized.includes("rate limit") || normalized.includes("too many")) {
-    return "Too many attempts. Please wait a moment and try again.";
+    return mode === "signup"
+      ? {
+          message: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+          helper: "If you already created the account, check your inbox or spam folder for the confirmation email.",
+        }
+      : { message: "Too many attempts. Please wait a moment and try again." };
   }
 
   if (
@@ -50,18 +66,24 @@ function authErrorMessage(message: string | undefined, mode: AuthMode) {
     normalized.includes("failed to fetch") ||
     normalized.includes("not configured")
   ) {
-    return mode === "signin"
-      ? "LeadHunter could not connect to sign you in. Please try again."
-      : "LeadHunter could not create your account right now. Please try again.";
+    return {
+      message:
+        mode === "signin"
+          ? "LeadHunter could not connect to sign you in. Please try again."
+          : "LeadHunter could not create your account right now. Please try again.",
+    };
   }
 
   if (normalized.includes("password must be at least")) {
-    return "Password must be at least 8 characters.";
+    return { message: "Password must be at least 8 characters." };
   }
 
-  return mode === "signin"
-    ? "Unable to sign in. Check your details and try again."
-    : "Unable to create your account. Please try again.";
+  return {
+    message:
+      mode === "signin"
+        ? "Unable to sign in. Check your details and try again."
+        : "Unable to create your account. Please try again.",
+  };
 }
 
 export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLimit: number }) {
@@ -75,12 +97,15 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [errorHelper, setErrorHelper] = useState("");
   const [checkEmail, setCheckEmail] = useState(false);
+  const submittingRef = useRef(false);
   const confirmed = searchParams.get("confirmed") === "true";
 
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
     setError("");
+    setErrorHelper("");
     setCheckEmail(false);
     setPassword("");
     setConfirmPassword("");
@@ -88,7 +113,12 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submittingRef.current) {
+      return;
+    }
+
     setError("");
+    setErrorHelper("");
 
     if (!email.trim() || !password) {
       setError("Enter your email and password.");
@@ -105,6 +135,7 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
       return;
     }
 
+    submittingRef.current = true;
     setLoading(true);
 
     try {
@@ -115,11 +146,15 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
       });
       const payload = (await response.json()) as {
         error?: string;
+        code?: string;
         requiresEmailConfirmation?: boolean;
       };
 
       if (!response.ok) {
-        throw new Error(authErrorMessage(payload.error, mode));
+        const details = authErrorDetails(payload.error, mode, payload.code);
+        setError(details.message);
+        setErrorHelper(details.helper ?? "");
+        return;
       }
 
       if (payload.requiresEmailConfirmation) {
@@ -130,8 +165,11 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
       router.push(safeNextPath(searchParams.get("next")));
       router.refresh();
     } catch (submitError) {
-      setError(authErrorMessage(submitError instanceof Error ? submitError.message : undefined, mode));
+      const details = authErrorDetails(submitError instanceof Error ? submitError.message : undefined, mode);
+      setError(details.message);
+      setErrorHelper(details.helper ?? "");
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
@@ -319,7 +357,10 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
 
                   {error ? (
                     <div id="auth-error" role="alert" className="app-alert app-alert-error">
-                      <p>{error}</p>
+                      <div>
+                        <p>{error}</p>
+                        {errorHelper ? <p className="mt-1 text-sm font-medium text-[var(--text-secondary)]">{errorHelper}</p> : null}
+                      </div>
                     </div>
                   ) : null}
 

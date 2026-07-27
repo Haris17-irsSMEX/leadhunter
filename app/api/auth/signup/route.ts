@@ -2,6 +2,40 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_ACCESS_COOKIE, AUTH_COOKIE_OPTIONS, AUTH_REFRESH_COOKIE } from "@/lib/auth-constants";
 
+function safeSignupError(error: { message?: string; status?: number }) {
+  const normalized = (error.message ?? "").toLowerCase();
+
+  if (error.status === 429 || normalized.includes("rate limit") || normalized.includes("too many")) {
+    return {
+      error: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+      code: "SIGNUP_RATE_LIMITED",
+      status: 429,
+    };
+  }
+
+  if (normalized.includes("already registered") || normalized.includes("already exists")) {
+    return {
+      error: "An account with this email already exists. Try signing in instead.",
+      code: "ACCOUNT_EXISTS",
+      status: 400,
+    };
+  }
+
+  if (normalized.includes("password")) {
+    return {
+      error: "Password must be at least 8 characters.",
+      code: "INVALID_PASSWORD",
+      status: 400,
+    };
+  }
+
+  return {
+    error: "Unable to create your account. Please try again.",
+    code: "SIGNUP_FAILED",
+    status: 400,
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { email?: string; password?: string };
@@ -36,7 +70,8 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      const safeError = safeSignupError(error);
+      return NextResponse.json({ error: safeError.error, code: safeError.code }, { status: safeError.status });
     }
 
     if (!data.session) {
