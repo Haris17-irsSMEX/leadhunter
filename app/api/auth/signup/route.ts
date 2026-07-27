@@ -7,7 +7,7 @@ function safeSignupError(error: { message?: string; status?: number }) {
 
   if (error.status === 429 || normalized.includes("rate limit") || normalized.includes("too many")) {
     return {
-      error: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+      error: "Too many signup attempts. Please wait 10–30 minutes before trying again.",
       code: "SIGNUP_RATE_LIMITED",
       status: 429,
     };

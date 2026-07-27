@@ -33,17 +33,24 @@ function authErrorDetails(message: string | undefined, mode: AuthMode, code?: st
 
   if (mode === "signup" && code === "SIGNUP_RATE_LIMITED") {
     return {
-      message: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+      message: "Too many signup attempts. Please wait 10–30 minutes before trying again.",
       helper: "If you already created the account, check your inbox or spam folder for the confirmation email.",
     };
   }
 
-  if (normalized.includes("invalid login credentials")) {
-    return { message: "The email or password is incorrect." };
+  if (code === "INVALID_CREDENTIALS" || normalized.includes("invalid login credentials") || normalized.includes("invalid credentials")) {
+    return {
+      message: "Email or password is incorrect. Please check your details or reset your password.",
+      helper: "Forgot your password? Contact support or use password reset when available.",
+    };
   }
 
-  if (normalized.includes("email not confirmed")) {
-    return { message: "Confirm your email address before signing in." };
+  if (code === "EMAIL_NOT_CONFIRMED" || normalized.includes("email not confirmed")) {
+    return { message: "Please confirm your email before signing in." };
+  }
+
+  if (code === "ACCOUNT_SIGNIN_DISABLED" || normalized.includes("banned") || normalized.includes("disabled")) {
+    return { message: "This account cannot currently sign in. Contact support." };
   }
 
   if (normalized.includes("already registered") || normalized.includes("already exists")) {
@@ -53,10 +60,10 @@ function authErrorDetails(message: string | undefined, mode: AuthMode, code?: st
   if (normalized.includes("rate limit") || normalized.includes("too many")) {
     return mode === "signup"
       ? {
-          message: "Too many signup attempts. Please wait 10-30 minutes before trying again.",
+          message: "Too many signup attempts. Please wait 10–30 minutes before trying again.",
           helper: "If you already created the account, check your inbox or spam folder for the confirmation email.",
         }
-      : { message: "Too many attempts. Please wait a moment and try again." };
+      : { message: "Too many attempts. Please wait 10–30 minutes before trying again." };
   }
 
   if (
@@ -263,7 +270,7 @@ export default function LoginForm({ freeMonthlyLeadLimit }: { freeMonthlyLeadLim
                 {confirmed ? (
                   <div className="app-alert app-alert-success mt-6" role="status">
                     <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
-                    <p>Email confirmed. You can sign in now.</p>
+                    <p>Email confirmation link opened. If confirmation completed, you can sign in now.</p>
                   </div>
                 ) : null}
 
