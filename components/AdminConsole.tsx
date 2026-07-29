@@ -18,7 +18,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { PlanName } from "@/lib/plans";
+import { PLANS, type PlanName } from "@/lib/plans";
 import type { Lead, ProfileStatus, ScrapeJob } from "@/lib/types";
 
 type Summary = {
@@ -378,9 +378,14 @@ export default function AdminConsole() {
                 <tr key={user.userId} className="transition hover:bg-[var(--surface-secondary)]">
                   <td className="px-6 py-4 font-medium text-[var(--text-primary)]">{user.email}</td>
                   <td className="px-4 py-4">
-                    <span className={`status-badge capitalize ${planTone(user.plan)}`}>
-                      {user.plan}
-                    </span>
+                    <div className="flex flex-col items-start gap-1">
+                      <span className={`status-badge capitalize ${planTone(user.plan)}`}>
+                        {user.plan}
+                      </span>
+                      <span className="text-xs text-[var(--text-muted)]">
+                        {PLANS[user.plan].monthlyLeadLimit.toLocaleString()} monthly
+                      </span>
+                    </div>
                   </td>
                   <td className="px-4 py-4">
                     <span
@@ -512,6 +517,12 @@ export default function AdminConsole() {
                   <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{detail.leadsThisMonth.toLocaleString()}</dd>
                 </div>
                 <div>
+                  <dt className="app-label">Monthly allowance</dt>
+                  <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
+                    {PLANS[detail.plan].monthlyLeadLimit.toLocaleString()}
+                  </dd>
+                </div>
+                <div>
                   <dt className="app-label">Total leads</dt>
                   <dd className="mt-1 text-lg font-semibold text-[var(--text-primary)]">{detail.totalLeads.toLocaleString()}</dd>
                 </div>
@@ -529,10 +540,10 @@ export default function AdminConsole() {
                     value={detail.plan}
                     onChange={(event) => setDetail({ ...detail, plan: event.target.value as PlanName })}
                   >
-                    <option value="free">Free</option>
-                    <option value="starter">Starter</option>
-                    <option value="pro">Pro</option>
-                    <option value="agency">Agency</option>
+                    <option value="free">Free - 50 leads/month</option>
+                    <option value="starter">Starter - 700 leads/month</option>
+                    <option value="pro">Pro - 2,500 leads/month</option>
+                    <option value="agency">Agency - 10,000 leads/month</option>
                   </select>
                 </label>
                 <label className="flex flex-col gap-2">

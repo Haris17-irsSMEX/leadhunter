@@ -181,7 +181,9 @@ export default function Sidebar({ userEmail, isAdmin }: SidebarProps) {
                 <p className="text-xs font-semibold text-[var(--text-muted)]">CURRENT PLAN</p>
                 <p className="mt-1 text-sm font-bold text-[var(--text-primary)]">{usage.planLabel}</p>
               </div>
-              <span className="app-badge badge-info">{usage.isAdmin ? "Internal" : `${usage.remaining} left`}</span>
+              <span className="app-badge badge-info">
+                {usage.isAdmin ? "Internal" : `${usage.remaining.toLocaleString()} left`}
+              </span>
             </div>
 
             {!usage.isAdmin ? (
@@ -197,8 +199,8 @@ export default function Sidebar({ userEmail, isAdmin }: SidebarProps) {
                   <span style={{ width: `${percentage}%` }} />
                 </div>
                 <div className="mt-2 flex items-center justify-between text-[11px] font-medium text-[var(--text-secondary)]">
-                  <span>{usage.used} used</span>
-                  <span>{usage.limit} monthly</span>
+                  <span>{usage.used.toLocaleString()} used</span>
+                  <span>{usage.limit.toLocaleString()} monthly</span>
                 </div>
                 <a
                   href={`mailto:${supportEmail}?subject=LeadHunter%20Plan%20Upgrade`}

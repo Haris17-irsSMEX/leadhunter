@@ -95,7 +95,6 @@ Copy `.env.local.example` and provide values only in `.env.local` or the deploym
 | `NEXT_PUBLIC_APP_URL` | Yes | Public application origin |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | Yes | Public support/demo email |
 | `ADMIN_EMAILS` | Recommended | Comma-separated internal admin emails |
-| `FREE_MONTHLY_LEAD_LIMIT` | Recommended | Free-plan limit; defaults to 25 |
 | `GOOGLE_PLACES_API_KEY` | For Maps | Google Places API key |
 | `GOOGLE_CREDENTIALS_B64` | For Sheets | Base64-encoded Google service-account JSON |
 | `SGAI_API_KEY` | For extraction | ScrapeGraphAI key for website, directory, Indie Hackers, Product Hunt, and enrichment |
@@ -133,8 +132,8 @@ Plan limits live in `lib/plans.ts`:
 
 | Plan | Monthly leads | Early-access price |
 |---|---:|---:|
-| Free | 25 | $0 |
-| Starter | 500 | $19 |
+| Free | 50 | $0 |
+| Starter | 700 | $19 |
 | Pro | 2,500 | $49 |
 | Agency | 10,000 | $99 |
 

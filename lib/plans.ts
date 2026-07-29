@@ -2,10 +2,6 @@ export const PLAN_NAMES = ["free", "starter", "pro", "agency"] as const;
 
 export type PlanName = (typeof PLAN_NAMES)[number];
 
-const configuredFreeLimit = Number(process.env.FREE_MONTHLY_LEAD_LIMIT ?? 25);
-const freeMonthlyLeadLimit =
-  Number.isFinite(configuredFreeLimit) && configuredFreeLimit > 0 ? Math.floor(configuredFreeLimit) : 25;
-
 export const PLANS: Record<
   PlanName,
   {
@@ -16,12 +12,12 @@ export const PLANS: Record<
 > = {
   free: {
     label: "Free",
-    monthlyLeadLimit: freeMonthlyLeadLimit,
+    monthlyLeadLimit: 50,
     price: 0,
   },
   starter: {
     label: "Starter",
-    monthlyLeadLimit: 500,
+    monthlyLeadLimit: 700,
     price: 19,
   },
   pro: {
