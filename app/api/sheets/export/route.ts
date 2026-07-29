@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
+import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { exportLeadsToSheet, GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import type { Lead } from "@/lib/types";
@@ -32,10 +34,12 @@ export async function POST(request: NextRequest) {
       count?: number;
       sheetName?: string;
       syncFilter?: string;
+      exportProfile?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
     const mode = body.mode ?? (Array.isArray(body.leadIds) && body.leadIds.length > 0 ? "selected" : "recent");
     const syncFilter = normalizeLeadExportFilter(body.syncFilter);
+    const exportProfile = normalizeLeadExportProfile(body.exportProfile);
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -72,16 +76,17 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    const leads = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
+    const filtered = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
 
-    if (!leads.length && syncFilter !== "all") {
+    if (!filtered.length && syncFilter !== "all") {
       return NextResponse.json({ error: "No leads match this sync filter." }, { status: 404 });
     }
 
+    const leads = await attachDecisionMakers(filtered);
     const result =
       mode === "all"
-        ? await syncLeadsToSheet(spreadsheetId, leads, sheetName)
-        : await exportLeadsToSheet(spreadsheetId, leads, sheetName);
+        ? await syncLeadsToSheet(spreadsheetId, leads, sheetName, exportProfile)
+        : await exportLeadsToSheet(spreadsheetId, leads, sheetName, exportProfile);
 
     return NextResponse.json(result);
   } catch (error) {

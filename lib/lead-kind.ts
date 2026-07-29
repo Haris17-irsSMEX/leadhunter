@@ -125,3 +125,28 @@ export function isRestaurantLead(lead: Lead) {
 export function isLocalServiceLead(lead: Lead) {
   return includesSignal(`${strongLeadText(lead)} ${weakLeadText(lead)}`, localServiceSignals);
 }
+
+const deliveryStatusKeys = [
+  "delivery_ubereats_status",
+  "delivery_doordash_status",
+  "delivery_grubhub_status",
+  "delivery_deliveroo_status",
+  "delivery_justeat_status",
+] as const;
+
+export function hasMeaningfulRestaurantIntelligence(lead: Lead) {
+  const checkedPlatform = deliveryStatusKeys.some((key) => {
+    const status = lead[key];
+    return Boolean(status && status !== "not_checked");
+  });
+
+  if (checkedPlatform) {
+    return true;
+  }
+
+  return Boolean(
+    isRestaurantLead(lead) &&
+      lead.restaurant_enrichment_status &&
+      lead.restaurant_enrichment_status !== "not_checked",
+  );
+}

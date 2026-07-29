@@ -37,21 +37,21 @@ export const metadata: Metadata = {
     absolute: "LeadHunter - Build Targeted Local Lead Lists",
   },
   description:
-    "Find local businesses by niche and city, collect useful public contact information, avoid duplicates, and export clean lead lists to Google Sheets, CSV, or Excel.",
+    "Find local businesses, research public decision-makers, and build evidence-backed outreach-ready prospect lists.",
   alternates: {
     canonical: "/",
   },
   openGraph: {
     title: "LeadHunter - Build Targeted Local Lead Lists",
     description:
-      "Find local businesses by niche and city, collect useful public contact information, avoid duplicates, and export clean lead lists.",
+      "Find local businesses, identify public decision-maker candidates, and build outreach-ready prospect lists.",
     type: "website",
     url: "/",
   },
   twitter: {
     card: "summary_large_image",
     title: "LeadHunter - Build Targeted Local Lead Lists",
-    description: "Turn public business information into organized, export-ready lead lists.",
+    description: "Turn public business information into evidence-backed, outreach-ready prospect lists.",
   },
 };
 
@@ -321,11 +321,11 @@ export default function HomePage() {
                 Local-business lead research for practical outreach
               </span>
               <h1 className="mt-6 text-[42px] font-extrabold leading-[1.02] tracking-[-0.055em] text-[var(--text-primary)] sm:text-6xl lg:text-[68px]">
-                Build targeted local lead lists in minutes.
+                Build outreach-ready prospect lists in minutes.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[var(--text-secondary)]">
-                Find businesses in almost any niche and city, collect useful contact information, avoid duplicate
-                leads, and export clean lists for outreach.
+                Find local businesses, identify the right public decision-maker where evidence is available, and
+                export focused prospect lists with clear contact options and outreach angles.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Link href={signupHref} className="btn-primary h-12 px-6">

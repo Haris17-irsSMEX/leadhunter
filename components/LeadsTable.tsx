@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Trash2, Users } from "lucide-react";
+import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Trash2, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
@@ -14,8 +14,11 @@ import {
 } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
+import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
-import type { DeliveryPlatformId, Lead } from "@/lib/types";
+import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
+import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
+import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
@@ -57,6 +60,21 @@ type EmailEnrichmentPayload = Lead & {
 type EmailSearchFeedback = {
   message: string;
   type: "success" | "info";
+};
+type DecisionMakerResearchPayload = {
+  lead?: Lead;
+  candidates?: DecisionMaker[];
+  cached?: boolean;
+  warnings?: string[];
+  message?: string;
+  error?: string;
+};
+type ManualDecisionMakerInput = {
+  name: string;
+  role: string;
+  publicWorkEmail: string;
+  publicProfileUrl: string;
+  sourceUrl: string;
 };
 
 class EmailSearchResponseError extends Error {}
@@ -332,7 +350,12 @@ function industryPreview(industry?: string) {
   };
 }
 
-function buildExportUrl(ids: string[], format: "csv" | "xlsx", exportFilter: LeadExportFilter) {
+function buildExportUrl(
+  ids: string[],
+  format: "csv" | "xlsx",
+  exportFilter: LeadExportFilter,
+  exportProfile: LeadExportProfile,
+) {
   const base = format === "xlsx" ? "/api/leads/export/xlsx" : "/api/leads/export";
   const query = new URLSearchParams();
 
@@ -343,6 +366,7 @@ function buildExportUrl(ids: string[], format: "csv" | "xlsx", exportFilter: Lea
   if (exportFilter !== "all") {
     query.set("export_filter", exportFilter);
   }
+  query.set("profile", exportProfile);
 
   const search = query.toString();
   return search ? `${base}?${search}` : base;
@@ -441,13 +465,7 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
 }
 
 function hasDeliverySignal(lead: Lead) {
-  return (
-    Boolean(lead.restaurant_enrichment_status && lead.restaurant_enrichment_status !== "not_checked") ||
-    deliveryPlatforms.some((platform) => {
-      const status = deliveryPlatformStatus(lead, platform.value);
-      return Boolean(status && status !== "not_checked");
-    })
-  );
+  return hasMeaningfulRestaurantIntelligence(lead);
 }
 
 function PlatformSummaryBadges({ lead }: { lead: Lead }) {
@@ -611,6 +629,43 @@ function needsEmailEnrichment(lead: Lead) {
   return Boolean(lead.id && lead.website?.trim() && !cleanSafePublicEmail(lead.email));
 }
 
+function decisionMakerStatusLabel(lead: Lead) {
+  const primary = getPrimaryDecisionMaker(lead);
+  if (primary?.public_work_email) return "Public work email found";
+  if (primary) return primary.confidence === "low" ? "Needs verification" : "Candidate found";
+  if (lead.decision_maker_research_status === "not_found") return "Not found";
+  if (lead.decision_maker_research_status === "partial") return "Partial result";
+  if (lead.decision_maker_research_status === "unavailable") return "Research unavailable";
+  if (lead.decision_maker_research_status === "error") return "Research failed";
+  return "Not researched";
+}
+
+function DecisionMakerSummary({ lead }: { lead: Lead }) {
+  const primary = getPrimaryDecisionMaker(lead);
+  const label = decisionMakerStatusLabel(lead);
+  const status = primary
+    ? primary.confidence === "low"
+      ? "unclear"
+      : "found"
+    : lead.decision_maker_research_status === "error"
+      ? "error"
+      : lead.decision_maker_research_status === "partial"
+        ? "partial"
+        : "not_checked";
+
+  return (
+    <div className="space-y-1.5">
+      {statusBadge(label, status)}
+      {primary ? (
+        <div>
+          <p className="max-w-[220px] truncate text-xs font-semibold text-[var(--text-primary)]">{primary.name}</p>
+          <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{primary.role}</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProfessionalLeadRow({
   lead,
   isExpanded,
@@ -622,7 +677,12 @@ function ProfessionalLeadRow({
   onCopyPhone,
   onDelete,
   onEnrichEmail,
+  onResearchDecisionMaker,
+  onUpdateDecisionMaker,
+  onAddDecisionMaker,
+  onEditDecisionMaker,
   isEnriching,
+  isResearchingDecisionMaker,
 }: {
   lead: Lead;
   isExpanded: boolean;
@@ -634,8 +694,23 @@ function ProfessionalLeadRow({
   onCopyPhone: () => void;
   onDelete: () => void;
   onEnrichEmail: () => void;
+  onResearchDecisionMaker: () => void;
+  onUpdateDecisionMaker: (candidate: DecisionMaker, action: "verify" | "reject" | "primary" | "delete") => void;
+  onAddDecisionMaker: (candidate: ManualDecisionMakerInput) => Promise<boolean>;
+  onEditDecisionMaker: (candidateId: string, candidate: ManualDecisionMakerInput) => Promise<boolean>;
   isEnriching: boolean;
+  isResearchingDecisionMaker: boolean;
 }) {
+  const [showManualCandidate, setShowManualCandidate] = useState(false);
+  const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [manualCandidate, setManualCandidate] = useState<ManualDecisionMakerInput>({
+    name: "",
+    role: "",
+    publicWorkEmail: "",
+    publicProfileUrl: "",
+    sourceUrl: lead.website ?? "",
+  });
+  const [savingManualCandidate, setSavingManualCandidate] = useState(false);
   const industry = industryPreview(lead.industry);
   const canFindEmail = needsEmailEnrichment(lead);
   const safeEmail = cleanSafePublicEmail(lead.email);
@@ -644,6 +719,8 @@ function ProfessionalLeadRow({
   const bestContactMethod = getBestContactMethod(lead);
   const contactability = getContactabilityStatus(lead);
   const showDeliveryIntelligence = hasDeliverySignal(lead);
+  const primaryDecisionMaker = getPrimaryDecisionMaker(lead);
+  const outreach = getOutreachIntelligence(lead);
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -717,7 +794,11 @@ function ProfessionalLeadRow({
           </div>
         </td>
         <td className="px-4 py-5 align-top">
-          <IntelligenceBadges lead={lead} />
+          <div className="space-y-2">
+            <DecisionMakerSummary lead={lead} />
+            {statusBadge(`${outreach.readinessScore}/100 · ${outreach.readinessStatus}`, outreach.readinessScore >= 60 ? "found" : outreach.readinessScore >= 40 ? "unclear" : "not_checked")}
+            <IntelligenceBadges lead={lead} />
+          </div>
         </td>
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
         <td className="px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
@@ -747,6 +828,20 @@ function ProfessionalLeadRow({
                 {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               </button>
             ) : null}
+            <button
+              type="button"
+              disabled={isResearchingDecisionMaker}
+              onClick={onResearchDecisionMaker}
+              className="icon-button h-8 w-8 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+              aria-label={
+                isResearchingDecisionMaker
+                  ? `Researching a decision-maker for ${lead.company_name}`
+                  : `Find a decision-maker for ${lead.company_name}`
+              }
+              title="Research public business sources for a decision-maker"
+            >
+              {isResearchingDecisionMaker ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserSearch className="h-4 w-4" />}
+            </button>
             <button type="button" onClick={onDelete} className="icon-button h-8 w-8 text-[var(--danger)] hover:text-[var(--danger)]" aria-label={`Delete ${lead.company_name}`}>
               <Trash2 className="h-4 w-4" />
             </button>
@@ -841,6 +936,235 @@ function ProfessionalLeadRow({
                 </section>
               </div>
 
+              <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_1fr]">
+                <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="app-label text-xs">Decision-maker</p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">Public business evidence only.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isResearchingDecisionMaker}
+                      onClick={onResearchDecisionMaker}
+                      className="btn-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
+                      {isResearchingDecisionMaker ? "Researching…" : primaryDecisionMaker ? "Research again" : "Find decision-maker"}
+                    </button>
+                  </div>
+                  {primaryDecisionMaker ? (
+                    <div className="mt-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-[var(--text-primary)]">{primaryDecisionMaker.name}</p>
+                          <p className="mt-1 text-sm text-[var(--text-secondary)]">{primaryDecisionMaker.role}</p>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {statusBadge(`${primaryDecisionMaker.confidence[0].toUpperCase()}${primaryDecisionMaker.confidence.slice(1)} confidence`, primaryDecisionMaker.confidence === "low" ? "unclear" : "found")}
+                          {statusBadge(
+                            primaryDecisionMaker.verification_status === "manually_verified" ? "Manually verified" : "Needs verification",
+                            primaryDecisionMaker.verification_status === "manually_verified" ? "found" : "unclear",
+                          )}
+                        </div>
+                      </div>
+                      {cleanSafePublicEmail(primaryDecisionMaker.public_work_email) ? (
+                        <p className="mt-3 text-sm text-[var(--text-primary)]">{cleanSafePublicEmail(primaryDecisionMaker.public_work_email)}</p>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <SmartLink href={primaryDecisionMaker.source_url} label="Open evidence" />
+                        <SmartLink href={primaryDecisionMaker.public_profile_url} label="Open public profile" />
+                        {primaryDecisionMaker.id && primaryDecisionMaker.verification_status !== "manually_verified" ? (
+                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "verify")} className="btn-secondary px-3 py-1.5 text-xs">
+                            Mark verified
+                          </button>
+                        ) : null}
+                        {primaryDecisionMaker.id ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCandidateId(primaryDecisionMaker.id ?? null);
+                              setManualCandidate({
+                                name: primaryDecisionMaker.name,
+                                role: primaryDecisionMaker.role,
+                                publicWorkEmail: primaryDecisionMaker.public_work_email ?? "",
+                                publicProfileUrl: primaryDecisionMaker.public_profile_url ?? "",
+                                sourceUrl: primaryDecisionMaker.source_url,
+                              });
+                              setShowManualCandidate(true);
+                            }}
+                            className="btn-secondary px-3 py-1.5 text-xs"
+                          >
+                            Edit
+                          </button>
+                        ) : null}
+                        {primaryDecisionMaker.id && !primaryDecisionMaker.is_primary ? (
+                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "primary")} className="btn-secondary px-3 py-1.5 text-xs">
+                            Make primary
+                          </button>
+                        ) : null}
+                        {primaryDecisionMaker.id ? (
+                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "reject")} className="btn-secondary px-3 py-1.5 text-xs text-[var(--danger)]">
+                            Reject
+                          </button>
+                        ) : null}
+                        {primaryDecisionMaker.id ? (
+                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "delete")} className="btn-secondary px-3 py-1.5 text-xs text-[var(--danger)]">
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 text-sm text-[var(--text-secondary)]">
+                      {lead.decision_maker_research_status === "not_found"
+                        ? "No public decision-maker information was found. Use the research links below to continue manually."
+                        : "Decision-maker research has not found a candidate yet."}
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {["owner", "founder", "manager"].map((role) => (
+                      <a
+                        key={role}
+                        href={`https://www.google.com/search?q=${encodeURIComponent(`"${lead.company_name}" ${role}`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-[var(--accent)] hover:underline"
+                      >
+                        Research {role}
+                      </a>
+                    ))}
+                    <a
+                      href={`https://www.google.com/search?q=${encodeURIComponent(`site:linkedin.com/in "${lead.company_name}" owner founder manager`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs font-semibold text-[var(--accent)] hover:underline"
+                    >
+                      Search public profiles
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCandidateId(null);
+                        setManualCandidate({
+                          name: "",
+                          role: "",
+                          publicWorkEmail: "",
+                          publicProfileUrl: "",
+                          sourceUrl: lead.website ?? "",
+                        });
+                        setShowManualCandidate((current) => !current);
+                      }}
+                      className="text-xs font-semibold text-[var(--accent)] hover:underline"
+                    >
+                      {showManualCandidate ? "Cancel manual entry" : "Add manual candidate"}
+                    </button>
+                  </div>
+                  {showManualCandidate ? (
+                    <form
+                      className="mt-4 grid gap-3 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:grid-cols-2"
+                      onSubmit={async (event) => {
+                        event.preventDefault();
+                        setSavingManualCandidate(true);
+                        const saved = editingCandidateId
+                          ? await onEditDecisionMaker(editingCandidateId, manualCandidate)
+                          : await onAddDecisionMaker(manualCandidate);
+                        setSavingManualCandidate(false);
+                        if (saved) {
+                          setShowManualCandidate(false);
+                          setEditingCandidateId(null);
+                          setManualCandidate({
+                            name: "",
+                            role: "",
+                            publicWorkEmail: "",
+                            publicProfileUrl: "",
+                            sourceUrl: lead.website ?? "",
+                          });
+                        }
+                      }}
+                    >
+                      <input
+                        required
+                        value={manualCandidate.name}
+                        onChange={(event) => setManualCandidate((current) => ({ ...current, name: event.target.value }))}
+                        placeholder="Name"
+                        aria-label="Decision-maker name"
+                        className="app-input"
+                      />
+                      <input
+                        required
+                        value={manualCandidate.role}
+                        onChange={(event) => setManualCandidate((current) => ({ ...current, role: event.target.value }))}
+                        placeholder="Role"
+                        aria-label="Decision-maker role"
+                        className="app-input"
+                      />
+                      <input
+                        type="email"
+                        value={manualCandidate.publicWorkEmail}
+                        onChange={(event) => setManualCandidate((current) => ({ ...current, publicWorkEmail: event.target.value }))}
+                        placeholder="Public work email (optional)"
+                        aria-label="Public work email"
+                        className="app-input"
+                      />
+                      <input
+                        value={manualCandidate.publicProfileUrl}
+                        onChange={(event) => setManualCandidate((current) => ({ ...current, publicProfileUrl: event.target.value }))}
+                        placeholder="Public profile URL (optional)"
+                        aria-label="Public profile URL"
+                        className="app-input"
+                      />
+                      <input
+                        required
+                        value={manualCandidate.sourceUrl}
+                        onChange={(event) => setManualCandidate((current) => ({ ...current, sourceUrl: event.target.value }))}
+                        placeholder="Evidence source URL"
+                        aria-label="Evidence source URL"
+                        className="app-input sm:col-span-2"
+                      />
+                      <button type="submit" disabled={savingManualCandidate} className="btn-primary sm:col-span-2 disabled:cursor-not-allowed disabled:opacity-60">
+                        {savingManualCandidate ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                        {savingManualCandidate ? "Saving…" : editingCandidateId ? "Save changes" : "Save candidate"}
+                      </button>
+                    </form>
+                  ) : null}
+                </section>
+
+                <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
+                  <p className="app-label text-xs">Outreach intelligence</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {statusBadge(`${outreach.readinessScore}/100`, outreach.readinessScore >= 60 ? "found" : outreach.readinessScore >= 40 ? "unclear" : "not_checked")}
+                    <span className="text-sm font-semibold text-[var(--text-primary)]">{outreach.readinessStatus}</span>
+                  </div>
+                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
+                    Based on contact availability and enrichment completeness. This is not a prediction of response or conversion.
+                  </p>
+                  <div className="mt-4 space-y-2">
+                    {outreach.opportunitySignals.slice(0, 5).map((signal) => (
+                      <p key={signal} className="text-sm text-[var(--text-secondary)]">• {signal}</p>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-xl border border-blue-200 bg-[var(--primary-soft)] p-3">
+                    <p className="app-label text-[10px]">Suggested outreach angle</p>
+                    <p className="mt-1 text-sm text-[var(--text-primary)]">{outreach.suggestedAngle}</p>
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(outreach.suggestedAngle)}
+                      className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent)]"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy outreach angle
+                    </button>
+                  </div>
+                  {lead.public_whatsapp_status === "confirmed_public" && lead.public_whatsapp_url ? (
+                    <div className="mt-4">
+                      <SmartLink href={lead.public_whatsapp_url} label="Open public business WhatsApp" />
+                      <p className="mt-2 text-xs text-[var(--text-secondary)]">Found from an explicit public website link.</p>
+                    </div>
+                  ) : null}
+                </section>
+              </div>
+
               {showDeliveryIntelligence ? (
                 <section className="mt-4 rounded-2xl border border-[var(--border-default)] bg-white p-4">
                   <p className="app-label text-xs">Delivery intelligence</p>
@@ -898,11 +1222,15 @@ export default function LeadsTable() {
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
+  const [exportProfile, setExportProfile] = useState<LeadExportProfile>("standard");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
+  const [researchingDecisionMakerIds, setResearchingDecisionMakerIds] = useState<string[]>([]);
+  const researchingDecisionMakerIdsRef = useRef(new Set<string>());
   const leadsRequestIdRef = useRef(0);
   const [bulkEnrichProgress, setBulkEnrichProgress] = useState<{ current: number; total: number } | null>(null);
+  const [bulkDecisionMakerCount, setBulkDecisionMakerCount] = useState(0);
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -1044,6 +1372,7 @@ export default function LeadsTable() {
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
   const selectedEnrichableLeads = leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && needsEmailEnrichment(lead));
+  const selectedDecisionMakerIds = selectedIds.slice(0, 5);
   const filtersActive =
     sourceFilter !== "all" ||
     websiteStatusFilter !== "all" ||
@@ -1308,11 +1637,212 @@ export default function LeadsTable() {
     }
   }
 
+  async function researchDecisionMaker(id: string, force = false) {
+    if (researchingDecisionMakerIdsRef.current.has(id)) return;
+    researchingDecisionMakerIdsRef.current.add(id);
+    setResearchingDecisionMakerIds((current) => [...new Set([...current, id])]);
+
+    try {
+      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/decision-makers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "research", force }),
+      });
+      const payload = (await parseResponseSafely(response)) as DecisionMakerResearchPayload;
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(response, payload.error ?? "Decision-maker research could not be completed."));
+      }
+      if (payload.lead?.id) updateLead(payload.lead);
+      const primary = payload.lead ? getPrimaryDecisionMaker(payload.lead) : undefined;
+      const toastType = primary && primary.confidence !== "low" ? "success" : "info";
+      showToast(payload.message ?? "Decision-maker research completed.", toastType);
+      if (payload.warnings?.length) showToast(payload.warnings[0], "warning");
+    } catch (researchError) {
+      const message = researchError instanceof Error
+        ? researchError.message
+        : "Decision-maker research could not be completed. Please try again.";
+      showToast(message, "error");
+    } finally {
+      researchingDecisionMakerIdsRef.current.delete(id);
+      setResearchingDecisionMakerIds((current) => current.filter((item) => item !== id));
+    }
+  }
+
+  async function researchSelectedDecisionMakers() {
+    if (!selectedDecisionMakerIds.length) return;
+    setBulkDecisionMakerCount(selectedDecisionMakerIds.length);
+    setResearchingDecisionMakerIds((current) => [...new Set([...current, ...selectedDecisionMakerIds])]);
+    selectedDecisionMakerIds.forEach((id) => researchingDecisionMakerIdsRef.current.add(id));
+
+    try {
+      const response = await fetch("/api/leads/decision-makers/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: selectedDecisionMakerIds }),
+      });
+      const payload = (await parseResponseSafely(response)) as {
+        completed?: number;
+        failed?: number;
+        results?: Array<{ success?: boolean; lead?: Lead }>;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Decision-maker research could not be completed.");
+      for (const result of payload.results ?? []) {
+        if (result.success && result.lead?.id) updateLead(result.lead);
+      }
+      showToast(
+        `Decision-maker research complete. ${payload.completed ?? 0} completed${payload.failed ? `, ${payload.failed} partial or failed` : ""}.`,
+        payload.failed ? "warning" : "success",
+      );
+      setSelectedIds([]);
+    } catch (researchError) {
+      showToast(
+        researchError instanceof Error ? researchError.message : "Decision-maker research could not be completed.",
+        "error",
+      );
+    } finally {
+      selectedDecisionMakerIds.forEach((id) => researchingDecisionMakerIdsRef.current.delete(id));
+      setResearchingDecisionMakerIds((current) => current.filter((id) => !selectedDecisionMakerIds.includes(id)));
+      setBulkDecisionMakerCount(0);
+    }
+  }
+
+  async function updateDecisionMaker(
+    leadId: string,
+    candidate: DecisionMaker,
+    action: "verify" | "reject" | "primary" | "delete",
+  ) {
+    if (!candidate.id) return;
+    if (action === "delete") {
+      if (!window.confirm(`Delete ${candidate.name} from this lead?`)) return;
+      try {
+        const response = await fetch(
+          `/api/leads/${encodeURIComponent(leadId)}/decision-makers/${encodeURIComponent(candidate.id)}`,
+          { method: "DELETE" },
+        );
+        const payload = await parseResponseSafely(response);
+        if (!response.ok) throw new Error(String(payload.error ?? "Decision-maker deletion failed."));
+        setLeads((current) =>
+          current.map((lead) =>
+            lead.id === leadId
+              ? { ...lead, decision_makers: (lead.decision_makers ?? []).filter((item) => item.id !== candidate.id) }
+              : lead,
+          ),
+        );
+        showToast("Decision-maker candidate deleted.", "success");
+      } catch (candidateError) {
+        showToast(candidateError instanceof Error ? candidateError.message : "Decision-maker deletion failed.", "error");
+      }
+      return;
+    }
+    const body =
+      action === "verify"
+        ? { verificationStatus: "manually_verified" }
+        : action === "reject"
+          ? { verificationStatus: "rejected" }
+          : { isPrimary: true };
+
+    try {
+      const response = await fetch(
+        `/api/leads/${encodeURIComponent(leadId)}/decision-makers/${encodeURIComponent(candidate.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const payload = (await parseResponseSafely(response)) as { candidate?: DecisionMaker; error?: string; message?: string };
+      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Decision-maker update failed.");
+      setLeads((current) =>
+        current.map((lead) => {
+          if (lead.id !== leadId) return lead;
+          const candidates = (lead.decision_makers ?? [])
+            .map((item) =>
+              item.id === payload.candidate?.id
+                ? payload.candidate
+                : action === "primary"
+                  ? { ...item, is_primary: false }
+                  : item,
+            )
+            .filter((item): item is DecisionMaker => Boolean(item && item.verification_status !== "rejected"));
+          return { ...lead, decision_makers: candidates };
+        }),
+      );
+      showToast(payload.message ?? "Decision-maker candidate updated.", "success");
+    } catch (candidateError) {
+      showToast(candidateError instanceof Error ? candidateError.message : "Decision-maker update failed.", "error");
+    }
+  }
+
+  async function addManualDecisionMaker(leadId: string, input: ManualDecisionMakerInput) {
+    try {
+      const response = await fetch(`/api/leads/${encodeURIComponent(leadId)}/decision-makers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "add_manual", ...input }),
+      });
+      const payload = (await parseResponseSafely(response)) as { candidate?: DecisionMaker; error?: string; message?: string };
+      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Unable to add decision-maker candidate.");
+      setLeads((current) =>
+        current.map((lead) =>
+          lead.id === leadId
+            ? { ...lead, decision_makers: [...(lead.decision_makers ?? []), payload.candidate as DecisionMaker] }
+            : lead,
+        ),
+      );
+      showToast(payload.message ?? "Decision-maker candidate added.", "success");
+      return true;
+    } catch (candidateError) {
+      showToast(candidateError instanceof Error ? candidateError.message : "Unable to add decision-maker candidate.", "error");
+      return false;
+    }
+  }
+
+  async function editDecisionMaker(
+    leadId: string,
+    candidateId: string,
+    input: ManualDecisionMakerInput,
+  ) {
+    try {
+      const response = await fetch(
+        `/api/leads/${encodeURIComponent(leadId)}/decision-makers/${encodeURIComponent(candidateId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      );
+      const payload = (await parseResponseSafely(response)) as {
+        candidate?: DecisionMaker;
+        error?: string;
+        message?: string;
+      };
+      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Unable to edit decision-maker candidate.");
+      setLeads((current) =>
+        current.map((lead) =>
+          lead.id === leadId
+            ? {
+                ...lead,
+                decision_makers: (lead.decision_makers ?? []).map((candidate) =>
+                  candidate.id === candidateId ? (payload.candidate as DecisionMaker) : candidate,
+                ),
+              }
+            : lead,
+        ),
+      );
+      showToast(payload.message ?? "Decision-maker candidate updated.", "success");
+      return true;
+    } catch (candidateError) {
+      showToast(candidateError instanceof Error ? candidateError.message : "Unable to edit decision-maker candidate.", "error");
+      return false;
+    }
+  }
+
   async function handleExport(ids: string[], format: "csv" | "xlsx") {
     setExporting(true);
 
     try {
-      const response = await fetch(buildExportUrl(ids, format, exportFilter), { cache: "no-store" });
+      const response = await fetch(buildExportUrl(ids, format, exportFilter, exportProfile), { cache: "no-store" });
 
       if (!response.ok) {
         const payload = await parseResponseSafely(response);
@@ -1401,7 +1931,14 @@ export default function LeadsTable() {
             </div>
             <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
-          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-[220px_auto_auto_auto] xl:w-auto">
+          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-[190px_210px_auto_auto_auto] xl:w-auto">
+            <label className="flex flex-col gap-2">
+              <span className="app-label text-xs">Export profile</span>
+              <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input h-11">
+                <option value="standard">Standard</option>
+                <option value="outreach_ready">Outreach-ready</option>
+              </select>
+            </label>
             <label className="flex flex-col gap-2">
               <span className="app-label text-xs">Export filter</span>
               <select value={exportFilter} onChange={(event) => setExportFilter(event.target.value as LeadExportFilter)} className="app-input h-11">
@@ -1538,17 +2075,30 @@ export default function LeadsTable() {
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
                 Enriching {bulkEnrichProgress.current} of {bulkEnrichProgress.total}...
               </p>
+            ) : bulkDecisionMakerCount ? (
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                Researching {bulkDecisionMakerCount} selected lead{bulkDecisionMakerCount === 1 ? "" : "s"} with bounded concurrency...
+              </p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={bulkEnrichProgress !== null}
+              disabled={bulkEnrichProgress !== null || bulkDecisionMakerCount > 0}
               onClick={() => void enrichSelected()}
               className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
             >
               {bulkEnrichProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
               Find emails for selected
+            </button>
+            <button
+              type="button"
+              disabled={bulkEnrichProgress !== null || bulkDecisionMakerCount > 0 || selectedDecisionMakerIds.length === 0}
+              onClick={() => void researchSelectedDecisionMakers()}
+              className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bulkDecisionMakerCount ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserSearch className="h-4 w-4" />}
+              Enrich decision-makers ({selectedDecisionMakerIds.length})
             </button>
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary">
               <FileSpreadsheet className="h-4 w-4" />
@@ -1647,7 +2197,28 @@ export default function LeadsTable() {
                           void handleEnrichLead(lead.id);
                         }
                       }}
+                      onResearchDecisionMaker={() => {
+                        if (lead.id) {
+                          const force = Boolean(
+                            lead.decision_maker_last_checked_at &&
+                              window.confirm("This lead was researched before. Run public research again?"),
+                          );
+                          if (!lead.decision_maker_last_checked_at || force) {
+                            void researchDecisionMaker(lead.id, force);
+                          }
+                        }
+                      }}
+                      onUpdateDecisionMaker={(candidate, action) => {
+                        if (lead.id) void updateDecisionMaker(lead.id, candidate, action);
+                      }}
+                      onAddDecisionMaker={(candidate) =>
+                        lead.id ? addManualDecisionMaker(lead.id, candidate) : Promise.resolve(false)
+                      }
+                      onEditDecisionMaker={(candidateId, candidate) =>
+                        lead.id ? editDecisionMaker(lead.id, candidateId, candidate) : Promise.resolve(false)
+                      }
                       isEnriching={lead.id ? enrichingIds.includes(lead.id) : false}
+                      isResearchingDecisionMaker={lead.id ? researchingDecisionMakerIds.includes(lead.id) : false}
                       onDelete={() => {
                         if (lead.id) {
                           void deleteOne(lead.id);
@@ -1702,6 +2273,7 @@ export default function LeadsTable() {
         selectedIds={selectedIds}
         totalLeads={total}
         defaultSyncFilter={exportFilter}
+        defaultExportProfile={exportProfile}
         onActionComplete={() => setSelectedIds([])}
       />
     </div>

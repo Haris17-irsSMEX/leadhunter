@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { leadMatchesContactFilter, normalizeContactFilter } from "@/lib/contactability";
 import { getSupabaseServiceClient } from "@/lib/db";
 import type { Lead } from "@/lib/types";
@@ -123,10 +124,14 @@ export async function GET(request: NextRequest) {
 
     if (contactFilter !== "all") {
       const filtered = ((data ?? []) as Lead[]).filter((lead) => leadMatchesContactFilter(lead, contactFilter));
-      return NextResponse.json({ leads: filtered.slice(offset, offset + limit), total: filtered.length });
+      const page = await attachDecisionMakers(filtered.slice(offset, offset + limit));
+      return NextResponse.json({ leads: page, total: filtered.length });
     }
 
-    return NextResponse.json({ leads: (data ?? []) as Lead[], total: count ?? 0 });
+    return NextResponse.json({
+      leads: await attachDecisionMakers((data ?? []) as Lead[]),
+      total: count ?? 0,
+    });
   } catch (error) {
     return apiErrorResponse(error, "Lead fetch failed.");
   }

@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload } from "lucide-react";
+import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Upload, UserSearch } from "lucide-react";
 import JobStatusCard from "@/components/JobStatusCard";
 import MonthlyLimitNotice from "@/components/MonthlyLimitNotice";
 import { getContactPageUrl } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
-import { isRestaurantSearchText } from "@/lib/lead-kind";
+import { hasMeaningfulRestaurantIntelligence, isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import type { UsageSummary } from "@/lib/usage";
@@ -389,6 +389,7 @@ export default function FinderPage() {
   const [mapsDeliveryPlatforms, setMapsDeliveryPlatforms] = useState<DeliveryPlatformId[]>(defaultDeliveryPlatforms);
   const [mapsDeliveryFilter, setMapsDeliveryFilter] = useState<DeliveryFilter>("all");
   const [mapsResult, setMapsResult] = useState<MapsResult | null>(null);
+  const [decisionMakerResearchingIds, setDecisionMakerResearchingIds] = useState<string[]>([]);
   const [directoryUrl, setDirectoryUrl] = useState("");
   const [directoryResult, setDirectoryResult] = useState<DirectoryResult | null>(null);
   const [communitySource, setCommunitySource] = useState<CommunitySource>("hackernews");
@@ -404,7 +405,10 @@ export default function FinderPage() {
   const [monthlyLimitUsage, setMonthlyLimitUsage] = useState<UsageSummary | null>(null);
   const supportEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "irssmex@gmail.com";
   const mapsSearchLooksRestaurant = isRestaurantSearchText(`${mapsQuery} ${mapsLocation}`);
-  const showRestaurantPreview = mapsRestaurantEnrichment;
+  const showRestaurantPreview = Boolean(
+    mapsRestaurantEnrichment &&
+      (mapsSearchLooksRestaurant || mapsResult?.leads.some(hasMeaningfulRestaurantIntelligence)),
+  );
   const mapsResultHasNoEmails = Boolean(mapsResult?.leads.length) && Boolean(mapsResult?.leads.every((lead) => !cleanSafePublicEmail(lead.email)));
   const [communityAvailability, setCommunityAvailability] = useState({
     communities: true,
@@ -711,6 +715,37 @@ export default function FinderPage() {
       handleFinderRequestError(error, "Unable to search Google Maps.", setMapsError);
     } finally {
       setMapsLoading(false);
+    }
+  }
+
+  async function researchMapResultDecisionMaker(lead: Lead) {
+    if (!lead.id || decisionMakerResearchingIds.includes(lead.id)) return;
+    setDecisionMakerResearchingIds((current) => [...new Set([...current, lead.id as string])]);
+
+    try {
+      const response = await fetch(`/api/leads/${encodeURIComponent(lead.id)}/decision-makers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "research" }),
+      });
+      const payload = (await response.json()) as { lead?: Lead; message?: string; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Decision-maker research could not be completed.");
+      if (payload.lead) {
+        const researchedLead = payload.lead;
+        setMapsResult((current) =>
+          current
+            ? {
+                ...current,
+                leads: current.leads.map((item) => (item.id === researchedLead.id ? researchedLead : item)),
+              }
+            : current,
+        );
+      }
+      showToast(payload.message ?? "Decision-maker research completed.", payload.lead?.decision_makers?.length ? "success" : "info");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Decision-maker research could not be completed.", "error");
+    } finally {
+      setDecisionMakerResearchingIds((current) => current.filter((id) => id !== lead.id));
     }
   }
 
@@ -1227,9 +1262,26 @@ export default function FinderPage() {
                               <td className="max-w-[240px] px-4 py-4 text-[var(--text-secondary)]">{lead.industry ?? "—"}</td>
                             ) : null}
                             <td className="px-4 py-4">
-                              {showRestaurantPreview
-                                ? statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)
-                                : scrapeStatusBadge(lead.scrape_status) ?? statusBadge("Saved", "found")}
+                              <div className="space-y-2">
+                                {showRestaurantPreview
+                                  ? statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)
+                                  : scrapeStatusBadge(lead.scrape_status) ?? statusBadge("Saved", "found")}
+                                {lead.id ? (
+                                  <button
+                                    type="button"
+                                    disabled={decisionMakerResearchingIds.includes(lead.id)}
+                                    onClick={() => void researchMapResultDecisionMaker(lead)}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {decisionMakerResearchingIds.includes(lead.id) ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <UserSearch className="h-3.5 w-3.5" />
+                                    )}
+                                    {decisionMakerResearchingIds.includes(lead.id) ? "Researching…" : "Enrich decision-maker"}
+                                  </button>
+                                ) : null}
+                              </div>
                             </td>
                           </tr>
                         ))}

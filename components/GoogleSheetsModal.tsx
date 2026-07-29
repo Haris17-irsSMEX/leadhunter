@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, FileSpreadsheet, Info, Loader2, X } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
+import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { useToast } from "@/lib/useToast";
 
@@ -16,6 +17,7 @@ type Props = {
   selectedIds?: string[];
   totalLeads: number;
   defaultSyncFilter?: LeadExportFilter;
+  defaultExportProfile?: LeadExportProfile;
   onActionComplete?: () => void;
 };
 
@@ -69,12 +71,21 @@ const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
   { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
 ];
 
-export default function GoogleSheetsModal({ open, onClose, selectedIds = [], totalLeads, defaultSyncFilter = "all", onActionComplete }: Props) {
+export default function GoogleSheetsModal({
+  open,
+  onClose,
+  selectedIds = [],
+  totalLeads,
+  defaultSyncFilter = "all",
+  defaultExportProfile = "standard",
+  onActionComplete,
+}: Props) {
   const { showToast } = useToast();
   const [spreadsheetId, setSpreadsheetId] = useState("");
   const [sheetName, setSheetName] = useState("Leads");
   const [mode, setMode] = useState<SheetMode>(selectedIds.length ? "selected" : "recent");
   const [syncFilter, setSyncFilter] = useState<LeadExportFilter>(defaultSyncFilter);
+  const [exportProfile, setExportProfile] = useState<LeadExportProfile>(defaultExportProfile);
   const [recentCount, setRecentCount] = useState(20);
   const [loadingMode, setLoadingMode] = useState<SheetMode | null>(null);
   const [error, setError] = useState("");
@@ -86,10 +97,11 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
     if (open) {
       setMode(selectedIds.length ? "selected" : "recent");
       setSyncFilter(defaultSyncFilter);
+      setExportProfile(defaultExportProfile);
       setError("");
       setSuccess(null);
     }
-  }, [defaultSyncFilter, open, selectedIds.length]);
+  }, [defaultExportProfile, defaultSyncFilter, open, selectedIds.length]);
 
   useEffect(() => {
     if (!open) {
@@ -158,6 +170,7 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
       leadIds: targetMode === "selected" ? selectedIds : undefined,
       count: targetMode === "recent" ? Math.min(Math.max(recentCount, 1), 500) : undefined,
       syncFilter,
+      exportProfile,
     };
 
     try {
@@ -296,7 +309,18 @@ export default function GoogleSheetsModal({ open, onClose, selectedIds = [], tot
           </label>
 
           <label className="block">
-            <span className="app-label">3. Sync filter</span>
+            <span className="app-label">3. Sheet format</span>
+            <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input mt-2 w-full">
+              <option value="standard">Standard lead list</option>
+              <option value="outreach_ready">Outreach-ready prospect list</option>
+            </select>
+            <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
+              Outreach-ready adds decision-maker evidence, opportunity signals, and readiness fields.
+            </span>
+          </label>
+
+          <label className="block">
+            <span className="app-label">4. Sync filter</span>
             <select value={syncFilter} onChange={(event) => setSyncFilter(event.target.value as LeadExportFilter)} className="app-input mt-2 w-full">
               {syncFilterOptions.map((option) => (
                 <option key={option.value} value={option.value}>

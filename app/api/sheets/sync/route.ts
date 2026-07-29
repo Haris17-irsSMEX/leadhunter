@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
+import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
+import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import type { Lead } from "@/lib/types";
@@ -29,9 +31,11 @@ export async function POST(request: NextRequest) {
       spreadsheetId?: string;
       sheetName?: string;
       syncFilter?: string;
+      exportProfile?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
     const syncFilter = normalizeLeadExportFilter(body.syncFilter);
+    const exportProfile = normalizeLeadExportProfile(body.exportProfile);
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -52,13 +56,19 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
 
-    const leads = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
+    const filtered = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
 
-    if (!leads.length && syncFilter !== "all") {
+    if (!filtered.length && syncFilter !== "all") {
       return NextResponse.json({ error: "No leads match this sync filter." }, { status: 404 });
     }
 
-    const result = await syncLeadsToSheet(spreadsheetId, leads, (body.sheetName?.trim() || "Leads").slice(0, 100));
+    const leads = await attachDecisionMakers(filtered);
+    const result = await syncLeadsToSheet(
+      spreadsheetId,
+      leads,
+      (body.sheetName?.trim() || "Leads").slice(0, 100),
+      exportProfile,
+    );
 
     return NextResponse.json(result);
   } catch (error) {

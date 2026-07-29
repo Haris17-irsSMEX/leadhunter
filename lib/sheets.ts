@@ -1,49 +1,6 @@
 import * as jose from "jose";
-import { getBestContactMethod, getContactabilityStatus, getContactPageUrl } from "@/lib/contactability";
-import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
-import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { buildLeadExportTable, type LeadExportProfile } from "@/lib/lead-export";
 import type { Lead } from "@/lib/types";
-
-export const HEADERS = [
-  "Company Name",
-  "Website",
-  "Best Contact Method",
-  "Contactability",
-  "Email",
-  "Email Source",
-  "Email Confidence",
-  "Contact Page URL",
-  "Phone",
-  "Location",
-  "Country",
-  "Industry",
-  "Uber Eats",
-  "Uber Eats Menu URL",
-  "Uber Eats Confidence",
-  "DoorDash",
-  "DoorDash Menu URL",
-  "DoorDash Confidence",
-  "Grubhub",
-  "Grubhub Menu URL",
-  "Grubhub Confidence",
-  "Deliveroo",
-  "Deliveroo Menu URL",
-  "Deliveroo Confidence",
-  "Just Eat",
-  "Just Eat Menu URL",
-  "Just Eat Confidence",
-  "Restaurant Enrichment",
-  "Description",
-  "Founder Name",
-  "LinkedIn",
-  "Twitter",
-  "Employee Count",
-  "Pricing",
-  "Tech Stack",
-  "Source",
-  "Source URL",
-  "Scraped At",
-];
 
 export class GoogleSheetsNotConfiguredError extends Error {
   constructor() {
@@ -77,63 +34,6 @@ type SheetsExportResult = {
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const TOKEN_AUDIENCE = "https://oauth2.googleapis.com/token";
 
-function cleanText(value: string | string[] | null | undefined) {
-  if (Array.isArray(value)) {
-    return value.filter(Boolean).join(", ");
-  }
-
-  return value?.trim() ?? "";
-}
-
-function cleanNumber(value: number | null | undefined) {
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
-}
-
-function restaurantEnrichmentLabel(value: Lead["restaurant_enrichment_status"]) {
-  const labels = {
-    completed: "Completed",
-    partial: "Partial",
-    error: "Error",
-    not_checked: "Not checked",
-  };
-
-  return value ? labels[value] : "";
-}
-
-function sourceLabel(source: Lead["source"]) {
-  const labels: Record<Lead["source"], string> = {
-    website: "Website",
-    google_maps: "Google Maps",
-    directory: "Directory",
-    hackernews: "Hacker News",
-    reddit: "Reddit",
-    indiehackers: "Indie Hackers",
-    producthunt: "Product Hunt",
-  };
-
-  return labels[source] ?? cleanText(source);
-}
-
-function formatDate(value?: string) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return cleanText(value);
-  }
-
-  const yyyy = date.getUTCFullYear();
-  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(date.getUTCDate()).padStart(2, "0");
-  const hh = String(date.getUTCHours()).padStart(2, "0");
-  const min = String(date.getUTCMinutes()).padStart(2, "0");
-
-  return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
-}
-
 function getCredentials(): ResolvedGoogleCredentials {
   const b64 = process.env.GOOGLE_CREDENTIALS_B64;
 
@@ -154,49 +54,6 @@ function getCredentials(): ResolvedGoogleCredentials {
     client_email: credentials.client_email,
     private_key: credentials.private_key,
   };
-}
-
-export function leadToRow(lead: Lead): string[] {
-  return [
-    cleanText(lead.company_name),
-    cleanText(lead.website),
-    getBestContactMethod(lead),
-    getContactabilityStatus(lead),
-    cleanSafePublicEmail(lead.email),
-    cleanSafePublicEmail(lead.email) ? cleanText(lead.email_source_url) : "",
-    cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "",
-    cleanText(getContactPageUrl(lead)),
-    cleanText(lead.phone),
-    cleanText(lead.location),
-    cleanText(lead.country),
-    cleanText(lead.industry),
-    deliveryStatusLabelForLead(lead, "ubereats"),
-    cleanText(lead.delivery_ubereats_menu_url),
-    cleanNumber(lead.delivery_ubereats_confidence),
-    deliveryStatusLabelForLead(lead, "doordash"),
-    cleanText(lead.delivery_doordash_menu_url),
-    cleanNumber(lead.delivery_doordash_confidence),
-    deliveryStatusLabelForLead(lead, "grubhub"),
-    cleanText(lead.delivery_grubhub_menu_url),
-    cleanNumber(lead.delivery_grubhub_confidence),
-    deliveryStatusLabelForLead(lead, "deliveroo"),
-    cleanText(lead.delivery_deliveroo_menu_url),
-    cleanNumber(lead.delivery_deliveroo_confidence),
-    deliveryStatusLabelForLead(lead, "justeat"),
-    cleanText(lead.delivery_justeat_menu_url),
-    cleanNumber(lead.delivery_justeat_confidence),
-    restaurantEnrichmentLabel(lead.restaurant_enrichment_status),
-    cleanText(lead.description),
-    cleanText(lead.founder_name),
-    cleanText(lead.linkedin_url),
-    cleanText(lead.twitter_handle),
-    cleanText(lead.employee_count),
-    cleanText(lead.pricing_model),
-    cleanText(lead.tech_stack),
-    sourceLabel(lead.source),
-    cleanText(lead.source_url),
-    formatDate(lead.scraped_at),
-  ];
 }
 
 function sheetRange(sheetName: string, range: string) {
@@ -352,7 +209,7 @@ async function clearValues(token: string, spreadsheetId: string, sheetName: stri
   );
 }
 
-async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: number) {
+async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: number, columnCount: number) {
   await sheetsRequest(
     token,
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
@@ -379,14 +236,14 @@ async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: nu
                 startRowIndex: 0,
                 endRowIndex: 1,
                 startColumnIndex: 0,
-                endColumnIndex: HEADERS.length,
+                endColumnIndex: columnCount,
               },
               cell: {
                 userEnteredFormat: {
                   backgroundColor: {
-                    red: 0.486,
-                    green: 0.361,
-                    blue: 0.988,
+                    red: 0.078,
+                    green: 0.388,
+                    blue: 1,
                   },
                   textFormat: {
                     bold: true,
@@ -407,7 +264,7 @@ async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: nu
                 sheetId,
                 dimension: "COLUMNS",
                 startIndex: 0,
-                endIndex: HEADERS.length,
+                endIndex: columnCount,
               },
             },
           },
@@ -417,11 +274,24 @@ async function formatLeadSheet(token: string, spreadsheetId: string, sheetId: nu
   );
 }
 
-async function writeHeaders(token: string, spreadsheetId: string, sheetName: string) {
-  await updateValues(token, spreadsheetId, sheetName, "A1:AL1", [HEADERS]);
+async function writeHeaders(token: string, spreadsheetId: string, sheetName: string, headers: string[]) {
+  const endColumn = columnName(headers.length);
+  await clearValues(token, spreadsheetId, sheetName, "A1:AZ1");
+  await updateValues(token, spreadsheetId, sheetName, `A1:${endColumn}1`, [headers]);
 }
 
-async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string) {
+function columnName(count: number) {
+  let value = Math.max(count, 1);
+  let result = "";
+  while (value > 0) {
+    value -= 1;
+    result = String.fromCharCode(65 + (value % 26)) + result;
+    value = Math.floor(value / 26);
+  }
+  return result;
+}
+
+async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string, headers: string[]) {
   const metadata = await getSpreadsheetMetadata(token, spreadsheetId);
   let sheet = metadata.sheets?.find((item) => item.properties?.title === sheetName);
 
@@ -435,7 +305,7 @@ async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName:
     throw new Error(`Unable to resolve sheet "${sheetName}"`);
   }
 
-  await writeHeaders(token, spreadsheetId, sheetName);
+  await writeHeaders(token, spreadsheetId, sheetName, headers);
 
   return { sheet, sheetId };
 }
@@ -445,18 +315,24 @@ function formattingWarning(error: unknown) {
   return `Google Sheets values synced, but formatting could not be applied: ${detail}`;
 }
 
-export async function exportLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads"): Promise<SheetsExportResult> {
+export async function exportLeadsToSheet(
+  spreadsheetId: string,
+  leads: Lead[],
+  sheetName = "Leads",
+  profile: LeadExportProfile = "standard",
+): Promise<SheetsExportResult> {
   const token = await getAccessToken();
   const warnings: string[] = [];
+  const table = buildLeadExportTable(leads, profile);
 
-  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
+  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName, table.headers);
 
   if (leads.length) {
-    await appendValues(token, spreadsheetId, sheetName, "A1", leads.map(leadToRow));
+    await appendValues(token, spreadsheetId, sheetName, "A1", table.rows);
   }
 
   try {
-    await formatLeadSheet(token, spreadsheetId, sheetId);
+    await formatLeadSheet(token, spreadsheetId, sheetId, table.headers.length);
   } catch (error) {
     warnings.push(formattingWarning(error));
   }
@@ -468,19 +344,25 @@ export async function exportLeadsToSheet(spreadsheetId: string, leads: Lead[], s
   };
 }
 
-export async function syncLeadsToSheet(spreadsheetId: string, leads: Lead[], sheetName = "Leads"): Promise<SheetsExportResult> {
+export async function syncLeadsToSheet(
+  spreadsheetId: string,
+  leads: Lead[],
+  sheetName = "Leads",
+  profile: LeadExportProfile = "standard",
+): Promise<SheetsExportResult> {
   const token = await getAccessToken();
   const warnings: string[] = [];
+  const table = buildLeadExportTable(leads, profile);
 
-  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName);
-  await clearValues(token, spreadsheetId, sheetName, "A2:AL");
+  const { sheetId } = await getOrCreateSheet(token, spreadsheetId, sheetName, table.headers);
+  await clearValues(token, spreadsheetId, sheetName, "A2:AZ");
 
   if (leads.length) {
-    await appendValues(token, spreadsheetId, sheetName, "A2", leads.map(leadToRow));
+    await appendValues(token, spreadsheetId, sheetName, "A2", table.rows);
   }
 
   try {
-    await formatLeadSheet(token, spreadsheetId, sheetId);
+    await formatLeadSheet(token, spreadsheetId, sheetId, table.headers.length);
   } catch (error) {
     warnings.push(formattingWarning(error));
   }

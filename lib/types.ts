@@ -47,6 +47,14 @@ export interface Lead {
   delivery_justeat_confidence?: number;
   restaurant_enrichment_status?: RestaurantEnrichmentStatus;
   restaurant_enriched_at?: string;
+  decision_maker_research_status?: DecisionMakerResearchStatus;
+  decision_maker_last_checked_at?: string;
+  public_whatsapp_url?: string;
+  public_whatsapp_number?: string;
+  public_whatsapp_source_url?: string;
+  public_whatsapp_status?: WhatsAppStatus;
+  public_whatsapp_last_checked_at?: string;
+  decision_makers?: DecisionMaker[];
   scraped_at?: string;
   scrape_status?: "new" | "already_saved" | "updated" | "skipped_duplicate";
 }
@@ -56,6 +64,49 @@ export type DeliveryPlatformStatus = "not_checked" | "found" | "not_found" | "un
 export type DeliveryPlatformId = "ubereats" | "doordash" | "grubhub" | "deliveroo" | "justeat";
 
 export type RestaurantEnrichmentStatus = "not_checked" | "completed" | "partial" | "error";
+
+export type DecisionMakerConfidence = "high" | "medium" | "low";
+export type DecisionMakerVerificationStatus = "unverified" | "manually_verified" | "rejected";
+export type DecisionMakerSourceType =
+  | "business_website"
+  | "structured_data"
+  | "public_search"
+  | "public_profile_link"
+  | "manual";
+export type DecisionMakerEmailType =
+  | "decision_maker_work"
+  | "role_based"
+  | "general_business"
+  | "public_personal"
+  | "unknown";
+export type DecisionMakerResearchStatus =
+  | "not_researched"
+  | "candidate_found"
+  | "needs_verification"
+  | "not_found"
+  | "partial"
+  | "error"
+  | "unavailable";
+export type WhatsAppStatus = "not_checked" | "confirmed_public" | "possible" | "not_found" | "error";
+
+export interface DecisionMaker {
+  id?: string;
+  user_id?: string;
+  lead_id?: string;
+  name: string;
+  role: string;
+  public_work_email?: string;
+  email_type?: DecisionMakerEmailType;
+  public_profile_url?: string;
+  source_url: string;
+  source_type: DecisionMakerSourceType;
+  confidence: DecisionMakerConfidence;
+  verification_status: DecisionMakerVerificationStatus;
+  is_primary: boolean;
+  last_checked_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export interface ScrapeJob {
   id: string;

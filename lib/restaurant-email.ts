@@ -1,6 +1,7 @@
 import "server-only";
 
 import { isSafePublicEmail } from "@/lib/email-safety";
+import { fetchPublicWebPage, normalizePublicWebsiteUrl } from "@/lib/public-web";
 import type { DeliveryPlatformStatus } from "@/lib/types";
 
 export type PublicEmailResult = {
@@ -34,23 +35,6 @@ const PREFERRED_PREFIXES = [
   "marketing",
 ];
 const CONSUMER_EMAIL_DOMAINS = new Set(["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "aol.com"]);
-
-function normalizeWebsiteUrl(website?: string) {
-  const trimmed = website?.trim();
-
-  if (!trimmed) {
-    return undefined;
-  }
-
-  try {
-    const url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-    url.hash = "";
-    url.search = "";
-    return url.toString().replace(/\/+$/, "");
-  } catch {
-    return undefined;
-  }
-}
 
 function pageUrl(baseUrl: string, path: string) {
   const url = new URL(baseUrl);
@@ -105,31 +89,13 @@ function confidenceForEmail(email: string, sourceUrl: string) {
 }
 
 async function fetchPublicPage(url: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/html, text/plain;q=0.9",
-        "User-Agent": "LeadHunter/1.0 RestaurantEnrichment",
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Website request failed with status ${response.status}`);
-    }
-
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType && !contentType.includes("text/html") && !contentType.includes("text/plain")) {
-      return "";
-    }
-
-    return (await response.text()).slice(0, 250_000);
-  } finally {
-    clearTimeout(timeout);
-  }
+  const page = await fetchPublicWebPage(url, {
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    maxBytes: 250_000,
+    maxRedirects: 3,
+    userAgent: "LeadHunter/1.0 PublicEmailResearch",
+  });
+  return page.html;
 }
 
 function extractEmails(html: string) {
@@ -208,7 +174,8 @@ function orderedPages(baseUrl: string, discoveredLinks: string[]) {
 }
 
 export async function findPublicBusinessEmail(website?: string): Promise<PublicEmailResult> {
-  const baseUrl = normalizeWebsiteUrl(website);
+  const normalizedWebsite = normalizePublicWebsiteUrl(website);
+  const baseUrl = normalizedWebsite?.toString().replace(/\/+$/, "");
 
   if (!baseUrl) {
     return { status: "not_checked" };
