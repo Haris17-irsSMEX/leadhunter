@@ -72,6 +72,12 @@ const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
   { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
 ];
 
+const exportProfileHelp: Record<LeadExportProfile, string> = {
+  standard: "Clean business contacts for general outreach.",
+  outreach_ready: "Includes decision-maker and suggested outreach fields.",
+  restaurant_focused: "Includes delivery-platform intelligence.",
+};
+
 export default function GoogleSheetsModal({
   open,
   onClose,
@@ -207,7 +213,7 @@ export default function GoogleSheetsModal({
   const selectedCount = selectedIds.length;
   const submitLabel =
     mode === "selected"
-      ? `Sync selected leads (${selectedCount})`
+      ? `Sync selected (${selectedCount})`
       : mode === "all"
         ? `Replace tab with all leads (${totalLeads} total)`
         : `Sync ${Math.min(Math.max(recentCount, 1), 500)} recent leads`;
@@ -313,14 +319,17 @@ export default function GoogleSheetsModal({
           <label className="block">
             <span className="app-label">3. Sheet format</span>
             <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input mt-2 w-full">
-              <option value="standard">Standard lead list</option>
-              <option value="outreach_ready">Outreach-ready prospect list (recommended)</option>
+              <option value="standard">Standard</option>
+              <option value="outreach_ready">Outreach-ready (recommended)</option>
               {restaurantProfileAvailable ? (
-                <option value="restaurant_focused">Restaurant-focused lead list</option>
+                <option value="restaurant_focused">Restaurant-focused</option>
               ) : null}
             </select>
             <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
-              Standard keeps local-business columns concise. Outreach-ready adds validated decision-maker evidence and readiness fields.
+              {exportProfileHelp[exportProfile]}
+            </span>
+            <span className="mt-1 block text-xs leading-5 text-[var(--text-muted)]">
+              Each sync replaces this tab so old columns and formatting do not remain.
             </span>
           </label>
 

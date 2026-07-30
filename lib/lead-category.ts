@@ -1,6 +1,7 @@
 const GENERIC_GOOGLE_CATEGORIES = new Set([
   "business",
   "establishment",
+  "health",
   "local business",
   "point of interest",
   "service",
