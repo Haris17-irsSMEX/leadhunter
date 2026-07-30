@@ -8,6 +8,7 @@ import MonthlyLimitNotice from "@/components/MonthlyLimitNotice";
 import { getContactPageUrl } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { getCategorySummary } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence, isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
@@ -941,7 +942,7 @@ export default function FinderPage() {
                       <LeadDetail label="Website" value={singleLead.website} />
                       <LeadDetail label="Founder" value={singleLead.founder_name} />
                       <LeadDetail label="Email" value={singleLead.email} />
-                      <LeadDetail label="Industry" value={singleLead.industry} />
+                      <LeadDetail label="Industry" value={getCategorySummary(singleLead.industry)} />
                       <LeadDetail label="Location" value={singleLead.location} />
                       <LeadDetail label="Pricing" value={singleLead.pricing_model} />
                       <LeadDetail label="Tech Stack" value={singleLead.tech_stack?.join(", ")} />
@@ -1259,7 +1260,9 @@ export default function FinderPage() {
                             <td className="px-4 py-4 text-[var(--text-secondary)]">{lead.phone ?? "—"}</td>
                             <td className="max-w-[260px] px-4 py-4 text-[var(--text-secondary)]">{lead.location ?? "—"}</td>
                             {!showRestaurantPreview ? (
-                              <td className="max-w-[240px] px-4 py-4 text-[var(--text-secondary)]">{lead.industry ?? "—"}</td>
+                              <td className="max-w-[240px] px-4 py-4 text-[var(--text-secondary)]">
+                                {getCategorySummary(lead.industry) || "—"}
+                              </td>
                             ) : null}
                             <td className="px-4 py-4">
                               <div className="space-y-2">

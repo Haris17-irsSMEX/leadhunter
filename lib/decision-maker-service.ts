@@ -3,6 +3,7 @@ import "server-only";
 import { PublicApiError } from "@/lib/api-errors";
 import { getAllowedUserIds } from "@/lib/auth";
 import { decisionMakerMigrationMissing } from "@/lib/decision-maker-db";
+import { isUsableDecisionMakerCandidate } from "@/lib/decision-maker-validation";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { researchDecisionMakers } from "@/lib/decision-maker-research";
 import type { User } from "@supabase/supabase-js";
@@ -78,16 +79,19 @@ export async function researchLeadDecisionMakers(
 ) {
   const lead = await loadLead(user, leadId);
   const existingCandidates = await loadCandidates(user, leadId);
+  const usableExistingCandidates = existingCandidates.filter((candidate) =>
+    isUsableDecisionMakerCandidate(candidate, lead.company_name),
+  );
 
   if (!options.force && isRecent(lead.decision_maker_last_checked_at)) {
     return {
-      lead: { ...lead, decision_makers: existingCandidates },
-      candidates: existingCandidates,
+      lead: { ...lead, decision_makers: usableExistingCandidates },
+      candidates: usableExistingCandidates,
       cached: true,
       warnings: [],
-      message: existingCandidates.length
+      message: usableExistingCandidates.length
         ? "Recent decision-maker research is already available."
-        : "This lead was researched recently. Confirm a retry to run it again.",
+        : "No reliable public decision-maker information was found.",
     };
   }
 
@@ -100,15 +104,36 @@ export async function researchLeadDecisionMakers(
       candidate.verification_status === "manually_verified" ||
       candidate.verification_status === "rejected",
   );
-  const preservedKeys = new Set(preserved.map(candidateKey));
+  const usablePreserved = preserved.filter((candidate) =>
+    isUsableDecisionMakerCandidate(candidate, lead.company_name),
+  );
+  const preservedKeys = new Set(usablePreserved.map(candidateKey));
   const newCandidates = result.candidates
     .filter((candidate) => !preservedKeys.has(candidateKey(candidate)))
     .map((candidate, index) => ({
       ...candidate,
       user_id: lead.user_id ?? user.id,
       lead_id: leadId,
-      is_primary: preserved.some((item) => item.is_primary) ? false : index === 0,
+      is_primary: usablePreserved.some((item) => item.is_primary) ? false : index === 0,
     }));
+
+  const invalidCandidateIds = existingCandidates
+    .filter(
+      (candidate) =>
+        candidate.id &&
+        candidate.verification_status !== "manually_verified" &&
+        !isUsableDecisionMakerCandidate(candidate, lead.company_name),
+    )
+    .map((candidate) => candidate.id as string);
+  if (invalidCandidateIds.length) {
+    const { error } = await supabase
+      .from("lead_decision_makers")
+      .update({ is_primary: false })
+      .in("id", invalidCandidateIds)
+      .eq("lead_id", leadId)
+      .in("user_id", getAllowedUserIds(user));
+    if (error) throw new Error(error.message);
+  }
 
   const { error: deleteError } = await supabase
     .from("lead_decision_makers")
@@ -126,7 +151,9 @@ export async function researchLeadDecisionMakers(
     inserted = (data ?? []) as DecisionMaker[];
   }
 
-  const candidates = [...preserved, ...inserted].sort((left, right) => Number(right.is_primary) - Number(left.is_primary));
+  const candidates = [...usablePreserved, ...inserted].sort(
+    (left, right) => Number(right.is_primary) - Number(left.is_primary),
+  );
   const status = researchStatus(candidates, result);
   const { data: updatedLead, error: leadUpdateError } = await supabase
     .from("leads")
@@ -153,7 +180,7 @@ export async function researchLeadDecisionMakers(
         : candidates.length
           ? "A possible decision-maker was found, but the information needs verification."
           : result.websiteAvailable || result.searchAvailable
-            ? "No public decision-maker information was found."
+            ? "No reliable public decision-maker information was found."
             : "The business website could not be researched.";
 
   return {

@@ -18,6 +18,7 @@ type Props = {
   totalLeads: number;
   defaultSyncFilter?: LeadExportFilter;
   defaultExportProfile?: LeadExportProfile;
+  restaurantProfileAvailable?: boolean;
   onActionComplete?: () => void;
 };
 
@@ -78,6 +79,7 @@ export default function GoogleSheetsModal({
   totalLeads,
   defaultSyncFilter = "all",
   defaultExportProfile = "standard",
+  restaurantProfileAvailable = false,
   onActionComplete,
 }: Props) {
   const { showToast } = useToast();
@@ -312,10 +314,13 @@ export default function GoogleSheetsModal({
             <span className="app-label">3. Sheet format</span>
             <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input mt-2 w-full">
               <option value="standard">Standard lead list</option>
-              <option value="outreach_ready">Outreach-ready prospect list</option>
+              <option value="outreach_ready">Outreach-ready prospect list (recommended)</option>
+              {restaurantProfileAvailable ? (
+                <option value="restaurant_focused">Restaurant-focused lead list</option>
+              ) : null}
             </select>
             <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
-              Outreach-ready adds decision-maker evidence, opportunity signals, and readiness fields.
+              Standard keeps local-business columns concise. Outreach-ready adds validated decision-maker evidence and readiness fields.
             </span>
           </label>
 
@@ -408,7 +413,7 @@ export default function GoogleSheetsModal({
               type="button"
               disabled={loadingMode !== null}
               onClick={() => void runSync(mode)}
-              className="btn-primary justify-center disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-primary justify-center sm:whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loadingMode ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {loadingMode ? "Syncing leads to Google Sheets..." : submitLabel}

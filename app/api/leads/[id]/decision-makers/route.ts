@@ -3,6 +3,10 @@ import { apiErrorResponse, PublicApiError } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { decisionMakerMigrationMissing } from "@/lib/decision-maker-db";
 import { researchLeadDecisionMakers } from "@/lib/decision-maker-service";
+import {
+  isLikelyDecisionMakerRole,
+  isLikelyHumanName,
+} from "@/lib/decision-maker-validation";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { classifyPublicEmail } from "@/lib/outreach-intelligence";
 import { isSafePublicEmail } from "@/lib/email-safety";
@@ -65,12 +69,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const supabase = getSupabaseServiceClient();
       const { data: lead, error: leadError } = await supabase
         .from("leads")
-        .select("id, user_id")
+        .select("id, user_id, company_name")
         .eq("id", id)
         .in("user_id", getAllowedUserIds(user))
         .maybeSingle();
       if (leadError) throw new Error(leadError.message);
       if (!lead) throw new PublicApiError("Lead not found.", 404, "LEAD_NOT_FOUND");
+      if (!isLikelyHumanName(name, lead.company_name)) {
+        return NextResponse.json({ error: "Enter a reliable human name, not a page title or service name." }, { status: 400 });
+      }
+      if (!isLikelyDecisionMakerRole(role)) {
+        return NextResponse.json({ error: "Enter a recognized decision-maker role." }, { status: 400 });
+      }
 
       const { data, error } = await supabase
         .from("lead_decision_makers")

@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
+import {
+  isLikelyDecisionMakerRole,
+  isLikelyHumanName,
+  isUsableDecisionMakerCandidate,
+} from "@/lib/decision-maker-validation";
 import { isSafePublicEmail } from "@/lib/email-safety";
 import { classifyPublicEmail } from "@/lib/outreach-intelligence";
 import type { DecisionMakerConfidence, DecisionMakerVerificationStatus } from "@/lib/types";
@@ -73,7 +78,46 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const supabase = getSupabaseServiceClient();
     const allowedUserIds = getAllowedUserIds(user);
+    const { data: lead, error: leadError } = await supabase
+      .from("leads")
+      .select("company_name")
+      .eq("id", id)
+      .in("user_id", allowedUserIds)
+      .maybeSingle();
+    if (leadError) throw new Error(leadError.message);
+    if (!lead) return NextResponse.json({ error: "Lead not found." }, { status: 404 });
+    if (name && !isLikelyHumanName(name, lead.company_name)) {
+      return NextResponse.json({ error: "Enter a reliable human name, not a page title or service name." }, { status: 400 });
+    }
+    if (role && !isLikelyDecisionMakerRole(role)) {
+      return NextResponse.json({ error: "Enter a recognized decision-maker role." }, { status: 400 });
+    }
+
     if (body.isPrimary === true) {
+      const { data: currentCandidate, error: candidateError } = await supabase
+        .from("lead_decision_makers")
+        .select("name, role, source_url, verification_status")
+        .eq("id", candidateId)
+        .eq("lead_id", id)
+        .in("user_id", allowedUserIds)
+        .maybeSingle();
+      if (candidateError) throw new Error(candidateError.message);
+      if (
+        !currentCandidate ||
+        !isUsableDecisionMakerCandidate(
+          {
+            ...currentCandidate,
+            name: name ?? currentCandidate.name,
+            role: role ?? currentCandidate.role,
+          },
+          lead.company_name,
+        )
+      ) {
+        return NextResponse.json(
+          { error: "Only a reliable, evidence-backed candidate can be selected as primary." },
+          { status: 400 },
+        );
+      }
       const { error } = await supabase
         .from("lead_decision_makers")
         .update({ is_primary: false })

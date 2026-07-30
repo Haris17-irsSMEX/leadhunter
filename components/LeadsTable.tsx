@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, Search, Trash2, UserSearch, Users } from "lucide-react";
+import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, Trash2, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
@@ -16,6 +16,7 @@ import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
+import { getCategorySummary, getCleanCategoryLabels } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
 import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
@@ -335,10 +336,7 @@ function compactStatus(status?: string) {
 }
 
 function industryPreview(industry?: string) {
-  const tags = (industry ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const tags = getCleanCategoryLabels(industry);
 
   if (!tags.length) {
     return { visible: "", more: 0 };
@@ -415,22 +413,6 @@ function statusBadge(label: string, status?: string) {
   return <span className={`status-badge px-2 py-0.5 text-[11px] ${className}`}>{label}</span>;
 }
 
-function scrapeStatusBadge(status?: Lead["scrape_status"]) {
-  if (!status) {
-    return null;
-  }
-
-  const labels: Record<NonNullable<Lead["scrape_status"]>, string> = {
-    new: "New",
-    updated: "Updated",
-    already_saved: "Already saved",
-    skipped_duplicate: "Skipped duplicate",
-  };
-
-  const badgeStatus = status === "new" ? "found" : status === "updated" ? "unclear" : "not_checked";
-  return statusBadge(labels[status], badgeStatus);
-}
-
 function InfoItem({ label, value }: { label: string; value?: string | string[] }) {
   const display = emptyText(value);
 
@@ -468,49 +450,6 @@ function hasDeliverySignal(lead: Lead) {
   return hasMeaningfulRestaurantIntelligence(lead);
 }
 
-function PlatformSummaryBadges({ lead }: { lead: Lead }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {deliveryPlatforms.map((platform) => {
-        const status = deliveryPlatformStatus(lead, platform.value);
-        const label = deliveryStatusLabelForLead(lead, platform.value);
-        const prominent = status === "found";
-        return (
-          <span key={platform.value} className={prominent ? "" : "opacity-70"}>
-            {statusBadge(`${platform.label}: ${label}`, status)}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function GeneralIntelligenceBadges({ lead }: { lead: Lead }) {
-  const safeEmail = cleanSafePublicEmail(lead.email);
-  const pageUrl = getContactPageUrl(lead);
-  const contactability = getContactabilityStatus(lead);
-
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
-      {statusBadge(lead.website ? "Website available" : "No website", lead.website ? "found" : "not_checked")}
-      {statusBadge(safeEmail ? "Public email found" : "No public email found", safeEmail ? "found" : "not_found")}
-      {pageUrl ? statusBadge("Contact page found", "found") : null}
-      <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${sourceBadgeClass(lead.source)}`}>
-        {sourceLabel(lead.source)}
-      </span>
-    </div>
-  );
-}
-
-function IntelligenceBadges({ lead }: { lead: Lead }) {
-  if (hasDeliverySignal(lead)) {
-    return <PlatformSummaryBadges lead={lead} />;
-  }
-
-  return <GeneralIntelligenceBadges lead={lead} />;
-}
-
 function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
   const status = deliveryPlatformStatus(lead, platform);
   const confidence = deliveryPlatformConfidence(lead, platform);
@@ -535,11 +474,7 @@ function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: Delive
 }
 
 function IndustryTags({ industry }: { industry?: string }) {
-  const tags = (industry ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .slice(0, 6);
+  const tags = getCleanCategoryLabels(industry).slice(0, 6);
 
   if (!tags.length) {
     return null;
@@ -631,9 +566,10 @@ function needsEmailEnrichment(lead: Lead) {
 
 function decisionMakerStatusLabel(lead: Lead) {
   const primary = getPrimaryDecisionMaker(lead);
-  if (primary?.public_work_email) return "Public work email found";
-  if (primary) return primary.confidence === "low" ? "Needs verification" : "Candidate found";
-  if (lead.decision_maker_research_status === "not_found") return "Not found";
+  if (primary) return primary.verification_status === "manually_verified" ? "Verified" : `${primary.confidence} confidence`;
+  if (lead.decision_maker_research_status === "not_found" || lead.decision_maker_research_status === "candidate_found") {
+    return "Needs research";
+  }
   if (lead.decision_maker_research_status === "partial") return "Partial result";
   if (lead.decision_maker_research_status === "unavailable") return "Research unavailable";
   if (lead.decision_maker_research_status === "error") return "Research failed";
@@ -644,9 +580,11 @@ function DecisionMakerSummary({ lead }: { lead: Lead }) {
   const primary = getPrimaryDecisionMaker(lead);
   const label = decisionMakerStatusLabel(lead);
   const status = primary
-    ? primary.confidence === "low"
-      ? "unclear"
-      : "found"
+    ? primary.verification_status === "manually_verified"
+      ? "found"
+      : primary.confidence === "low"
+        ? "unclear"
+        : "found"
     : lead.decision_maker_research_status === "error"
       ? "error"
       : lead.decision_maker_research_status === "partial"
@@ -654,14 +592,16 @@ function DecisionMakerSummary({ lead }: { lead: Lead }) {
         : "not_checked";
 
   return (
-    <div className="space-y-1.5">
-      {statusBadge(label, status)}
+    <div className="space-y-2">
       {primary ? (
         <div>
-          <p className="max-w-[220px] truncate text-xs font-semibold text-[var(--text-primary)]">{primary.name}</p>
+          <p className="max-w-[220px] truncate text-sm font-semibold text-[var(--text-primary)]">{primary.name}</p>
           <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{primary.role}</p>
         </div>
-      ) : null}
+      ) : (
+        <p className="text-xs font-medium text-[var(--text-muted)]">{label}</p>
+      )}
+      {primary ? statusBadge(label, status) : null}
     </div>
   );
 }
@@ -675,6 +615,7 @@ function ProfessionalLeadRow({
   onCopyEmail,
   onCopyLead,
   onCopyPhone,
+  onCopyWebsite,
   onDelete,
   onEnrichEmail,
   onResearchDecisionMaker,
@@ -692,6 +633,7 @@ function ProfessionalLeadRow({
   onCopyEmail: () => void;
   onCopyLead: () => void;
   onCopyPhone: () => void;
+  onCopyWebsite: () => void;
   onDelete: () => void;
   onEnrichEmail: () => void;
   onResearchDecisionMaker: () => void;
@@ -747,7 +689,6 @@ function ProfessionalLeadRow({
             <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
               {sourceLabel(lead.source)}
             </span>
-            {scrapeStatusBadge(lead.scrape_status)}
           </div>
           <p className={lead.website ? "mt-2 text-xs text-[var(--text-secondary)]" : "mt-2 text-xs text-[var(--text-muted)]"}>{websiteLabel}</p>
           {industry.visible ? (
@@ -777,74 +718,99 @@ function ProfessionalLeadRow({
             {!safeEmail && !pageUrl && !lead.phone && lead.website ? (
               <p className="text-xs font-medium text-[var(--text-muted)]">Website only</p>
             ) : null}
-            {!safeEmail && canFindEmail ? (
-              <button
-                type="button"
-                disabled={isEnriching}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEnrichEmail();
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                {isEnriching ? "Searching…" : "Find email"}
-              </button>
-            ) : null}
           </div>
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
             <DecisionMakerSummary lead={lead} />
-            {statusBadge(`${outreach.readinessScore}/100 · ${outreach.readinessStatus}`, outreach.readinessScore >= 60 ? "found" : outreach.readinessScore >= 40 ? "unclear" : "not_checked")}
-            <IntelligenceBadges lead={lead} />
+            <div>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">{outreach.readinessScore}/100</p>
+              <p className="text-xs text-[var(--text-secondary)]">{outreach.readinessStatus}</p>
+            </div>
           </div>
         </td>
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
         <td className="px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
-          <div className="flex items-center justify-end gap-1">
-            <a
-              href={lead.website || "#"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`icon-button h-8 w-8 ${lead.website ? "" : "pointer-events-none opacity-40"}`}
-              aria-label={`Open ${lead.company_name} website`}
-              title={lead.website ? `Open ${websiteLabel}` : "No website"}
-            >
-              <ExternalLink className="h-4 w-4" />
-            </a>
-            <button type="button" onClick={onCopyLead} className="icon-button h-8 w-8" aria-label={`Copy ${lead.company_name} lead details`} title="Copy lead">
-              <Copy className="h-4 w-4" />
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={onToggleExpand} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
+              Open
             </button>
-            {canFindEmail ? (
+            {safeEmail ? (
+              <button type="button" onClick={onCopyEmail} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
+                <Mail className="h-3.5 w-3.5" />
+                Email
+              </button>
+            ) : pageUrl ? (
+              <a
+                href={pageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs"
+              >
+                Contact
+              </a>
+            ) : canFindEmail ? (
               <button
                 type="button"
                 disabled={isEnriching}
                 onClick={onEnrichEmail}
-                className="icon-button h-8 w-8 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-                aria-label={isEnriching ? `Searching for email for ${lead.company_name}` : `Find email for ${lead.company_name}`}
-                title={isEnriching ? "Searching public contact pages…" : "Search public contact and about pages when available."}
+                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                {isEnriching ? "Searching…" : "Find email"}
+              </button>
+            ) : lead.phone ? (
+              <button type="button" onClick={onCopyPhone} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
+                Phone
               </button>
             ) : null}
-            <button
-              type="button"
-              disabled={isResearchingDecisionMaker}
-              onClick={onResearchDecisionMaker}
-              className="icon-button h-8 w-8 text-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60"
-              aria-label={
-                isResearchingDecisionMaker
-                  ? `Researching a decision-maker for ${lead.company_name}`
-                  : `Find a decision-maker for ${lead.company_name}`
-              }
-              title="Research public business sources for a decision-maker"
-            >
-              {isResearchingDecisionMaker ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserSearch className="h-4 w-4" />}
-            </button>
-            <button type="button" onClick={onDelete} className="icon-button h-8 w-8 text-[var(--danger)] hover:text-[var(--danger)]" aria-label={`Delete ${lead.company_name}`}>
-              <Trash2 className="h-4 w-4" />
-            </button>
+            <details className="group relative">
+              <summary
+                className="icon-button h-9 w-9 cursor-pointer list-none"
+                aria-label={`More actions for ${lead.company_name}`}
+                title="More actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </summary>
+              <div className="absolute right-0 z-30 mt-2 w-56 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]">
+                {lead.website ? (
+                  <a href={lead.website} target="_blank" rel="noopener noreferrer" className="block rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                    Open website
+                  </a>
+                ) : null}
+                <button type="button" onClick={onCopyLead} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  Copy lead
+                </button>
+                {lead.website ? (
+                  <button type="button" onClick={onCopyWebsite} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                    Copy website
+                  </button>
+                ) : null}
+                {lead.phone ? (
+                  <button type="button" onClick={onCopyPhone} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                    Copy phone
+                  </button>
+                ) : null}
+                {safeEmail ? (
+                  <button type="button" onClick={onCopyEmail} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                    Copy email
+                  </button>
+                ) : null}
+                {canFindEmail ? (
+                  <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                    Find email
+                  </button>
+                ) : null}
+                <button type="button" disabled={isResearchingDecisionMaker} onClick={onResearchDecisionMaker} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                  {isResearchingDecisionMaker ? "Researching…" : "Find decision-maker"}
+                </button>
+                <div className="mt-1 border-t border-[var(--border-default)] pt-1">
+                  <button type="button" onClick={onDelete} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
+                    Delete lead
+                  </button>
+                </div>
+              </div>
+            </details>
           </div>
         </td>
       </tr>
@@ -972,8 +938,19 @@ function ProfessionalLeadRow({
                         <p className="mt-3 text-sm text-[var(--text-primary)]">{cleanSafePublicEmail(primaryDecisionMaker.public_work_email)}</p>
                       ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <SmartLink href={primaryDecisionMaker.source_url} label="Open evidence" />
-                        <SmartLink href={primaryDecisionMaker.public_profile_url} label="Open public profile" />
+                        <SmartLink
+                          href={/^https?:\/\//i.test(primaryDecisionMaker.source_url) ? primaryDecisionMaker.source_url : undefined}
+                          label="Open evidence"
+                        />
+                        <SmartLink
+                          href={
+                            primaryDecisionMaker.public_profile_url &&
+                            /^https?:\/\//i.test(primaryDecisionMaker.public_profile_url)
+                              ? primaryDecisionMaker.public_profile_url
+                              : undefined
+                          }
+                          label="Open public profile"
+                        />
                         {primaryDecisionMaker.id && primaryDecisionMaker.verification_status !== "manually_verified" ? (
                           <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "verify")} className="btn-secondary px-3 py-1.5 text-xs">
                             Mark verified
@@ -1017,9 +994,7 @@ function ProfessionalLeadRow({
                     </div>
                   ) : (
                     <div className="mt-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 text-sm text-[var(--text-secondary)]">
-                      {lead.decision_maker_research_status === "not_found"
-                        ? "No public decision-maker information was found. Use the research links below to continue manually."
-                        : "Decision-maker research has not found a candidate yet."}
+                      No reliable public decision-maker found. Use the research links below or add a manually verified candidate.
                     </div>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1223,6 +1198,7 @@ export default function LeadsTable() {
   const [exporting, setExporting] = useState(false);
   const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
   const [exportProfile, setExportProfile] = useState<LeadExportProfile>("standard");
+  const exportProfileSelectionRef = useRef("");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
@@ -1371,6 +1347,20 @@ export default function LeadsTable() {
   const selectedVisibleIds = selectableVisibleIds.filter((id) => selectedIds.includes(id));
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
+  const exportTargetLeads = leads.filter((lead) => lead.id && exportTargetIds.includes(lead.id));
+  const restaurantProfileAvailable = exportTargetLeads.some(hasMeaningfulRestaurantIntelligence);
+  const selectedLeadsHaveOutreachData =
+    selectedIds.length > 0 &&
+    exportTargetLeads.some(
+      (lead) =>
+        Boolean(getPrimaryDecisionMaker(lead)) ||
+        Boolean(cleanSafePublicEmail(lead.email)) ||
+        Boolean(getContactPageUrl(lead)) ||
+        lead.public_whatsapp_status === "confirmed_public" ||
+        (lead.decision_maker_research_status !== undefined &&
+          lead.decision_maker_research_status !== "not_researched"),
+    );
+  const selectedIdsSignature = [...selectedIds].sort().join(",");
   const selectedEnrichableLeads = leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && needsEmailEnrichment(lead));
   const selectedDecisionMakerIds = selectedIds.slice(0, 5);
   const filtersActive =
@@ -1387,6 +1377,12 @@ export default function LeadsTable() {
     contactFilter !== "all",
     Boolean(jobIdFilter),
   ].filter(Boolean).length;
+
+  useEffect(() => {
+    if (selectedIdsSignature === exportProfileSelectionRef.current) return;
+    exportProfileSelectionRef.current = selectedIdsSignature;
+    setExportProfile(selectedIds.length && selectedLeadsHaveOutreachData ? "outreach_ready" : "standard");
+  }, [selectedIds.length, selectedIdsSignature, selectedLeadsHaveOutreachData]);
 
   function clearFilters() {
     setSearch("");
@@ -1527,6 +1523,20 @@ export default function LeadsTable() {
     }
   }
 
+  async function handleCopyWebsite(website?: string) {
+    if (!website?.trim()) {
+      setCopyMessage("No website is available to copy.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(website.trim());
+      setCopyMessage("Website copied.");
+    } catch {
+      setCopyMessage("Unable to copy the website.");
+    }
+  }
+
   async function handleCopyLead(lead: Lead) {
     const lines = [
       lead.company_name,
@@ -1534,7 +1544,7 @@ export default function LeadsTable() {
       cleanSafePublicEmail(lead.email) ? `Email: ${cleanSafePublicEmail(lead.email)}` : "Email: Not found",
       lead.phone ? `Phone: ${lead.phone}` : "Phone: Not listed",
       lead.location ? `Location: ${lead.location}` : "",
-      lead.industry ? `Industry: ${lead.industry}` : "",
+      getCategorySummary(lead.industry) ? `Category: ${getCategorySummary(lead.industry)}` : "",
       `Source: ${sourceLabel(lead.source)}`,
     ].filter(Boolean);
 
@@ -1936,7 +1946,10 @@ export default function LeadsTable() {
               <span className="app-label text-xs">Export profile</span>
               <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input h-11">
                 <option value="standard">Standard</option>
-                <option value="outreach_ready">Outreach-ready</option>
+                <option value="outreach_ready">Outreach-ready (recommended)</option>
+                {restaurantProfileAvailable ? (
+                  <option value="restaurant_focused">Restaurant-focused</option>
+                ) : null}
               </select>
             </label>
             <label className="flex flex-col gap-2">
@@ -1949,17 +1962,17 @@ export default function LeadsTable() {
                 ))}
               </select>
             </label>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export to CSV"}
             </button>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary h-11 self-end justify-center disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary h-11 self-end justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export to Excel"}
             </button>
-            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-11 self-end justify-center">
+            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-11 self-end justify-center whitespace-nowrap">
               <FileSpreadsheet className="h-4 w-4" />
-              Sync to Google Sheets
+              Sync Sheets
             </button>
           </div>
         </div>
@@ -2100,9 +2113,9 @@ export default function LeadsTable() {
               {bulkDecisionMakerCount ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserSearch className="h-4 w-4" />}
               Enrich decision-makers ({selectedDecisionMakerIds.length})
             </button>
-            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary">
+            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary whitespace-nowrap">
               <FileSpreadsheet className="h-4 w-4" />
-              Sync selected to Sheets
+              Sync selected
             </button>
             <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
               {exporting ? "Exporting..." : "Export to CSV"}
@@ -2132,15 +2145,15 @@ export default function LeadsTable() {
       ) : (
         <section className="app-card overflow-hidden p-0">
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[1120px] table-fixed text-left text-sm">
+          <table className="w-full min-w-[1280px] table-fixed text-left text-sm">
             <colgroup>
               <col style={{ width: "44px" }} />
-              <col style={{ width: "30%" }} />
-              <col style={{ width: "18%" }} />
+              <col style={{ width: "27%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "22%" }} />
+              <col style={{ width: "16%" }} />
+              <col style={{ width: "19%" }} />
               <col style={{ width: "9%" }} />
-              <col style={{ width: "96px" }} />
+              <col style={{ width: "230px" }} />
             </colgroup>
             <thead className="border-b border-[var(--border)] bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
               <tr>
@@ -2156,7 +2169,7 @@ export default function LeadsTable() {
                 <th className="px-4 py-3 font-medium">Lead</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Intelligence</th>
+                <th className="px-4 py-3 font-medium">Decision-maker / outreach</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
@@ -2192,6 +2205,7 @@ export default function LeadsTable() {
                       onCopyEmail={() => void handleCopyEmail(cleanSafePublicEmail(lead.email))}
                       onCopyLead={() => void handleCopyLead(lead)}
                       onCopyPhone={() => void handleCopyPhone(lead.phone)}
+                      onCopyWebsite={() => void handleCopyWebsite(lead.website)}
                       onEnrichEmail={() => {
                         if (lead.id) {
                           void handleEnrichLead(lead.id);
@@ -2274,6 +2288,7 @@ export default function LeadsTable() {
         totalLeads={total}
         defaultSyncFilter={exportFilter}
         defaultExportProfile={exportProfile}
+        restaurantProfileAvailable={restaurantProfileAvailable}
         onActionComplete={() => setSelectedIds([])}
       />
     </div>

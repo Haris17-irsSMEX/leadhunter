@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  isLikelyDecisionMakerRole,
+  isLikelyHumanName,
+  isUsableDecisionMakerCandidate,
+} from "@/lib/decision-maker-validation";
 import { isSafePublicEmail } from "@/lib/email-safety";
 import { isAgencyLead, isRestaurantLead } from "@/lib/lead-kind";
 import { classifyPublicEmail } from "@/lib/outreach-intelligence";
@@ -7,7 +12,6 @@ import { fetchPublicWebPage, normalizePublicWebsiteUrl, sameRegistrableHost } fr
 import type {
   DecisionMaker,
   DecisionMakerConfidence,
-  DecisionMakerSourceType,
   Lead,
   WhatsAppStatus,
 } from "@/lib/types";
@@ -47,12 +51,26 @@ const RESEARCH_PATHS = [
 const ROLE_PATTERN =
   "(?:co[- ]?founder|founder|owner|broker\\/owner|managing broker|practice manager|office manager|general manager|location manager|managing director|marketing director|marketing manager|sales director|operations manager|chief executive officer|ceo|president|principal|partner|broker|director|head of growth|business development manager)";
 const PERSON_NAME_PATTERN = "[A-Z][A-Za-z'’-]{1,30}(?:\\s+[A-Z][A-Za-z'’-]{1,30}){1,3}";
+const HUMAN_NAME_CAPTURE_PATTERN =
+  "[A-Z][A-Za-z'’-]{1,30}(?:\\s+(?:[A-Z]\\.|[A-Z][A-Za-z'’-]{1,30})){1,3}";
 const ROLE_LINK_PATTERN =
   /about|team|leadership|management|staff|people|agents|brokers|company|who-we-are|our-team/i;
 const LINKEDIN_PROFILE_PATTERN = /^https?:\/\/(?:[\w-]+\.)?linkedin\.com\/in\//i;
 const WHATSAPP_URL_PATTERN = /^https?:\/\/(?:wa\.me|api\.whatsapp\.com)\//i;
 const WHATSAPP_SCHEME_PATTERN = /^whatsapp:\/\//i;
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+const GENERIC_COMPANY_TOKENS = new Set([
+  "agency",
+  "business",
+  "clinic",
+  "company",
+  "consulting",
+  "digital",
+  "group",
+  "marketing",
+  "restaurant",
+  "services",
+]);
 
 function decodeHtml(value: string) {
   return value
@@ -124,24 +142,27 @@ function linkedinUrlFromContext(context: string, pageUrl: string) {
   return undefined;
 }
 
-function visibleCandidates(html: string, sourceUrl: string): Candidate[] {
+function visibleCandidates(html: string, sourceUrl: string, companyName: string): Candidate[] {
   const decodedHtml = decodeHtml(html);
   const text = stripHtml(html);
   const candidates: Candidate[] = [];
   const patterns = [
+    new RegExp(`(${HUMAN_NAME_CAPTURE_PATTERN})\\s*(?:[-|,:]\\s*|\\n+|\\s{2,})(${ROLE_PATTERN})`, "gi"),
+    new RegExp(`(${ROLE_PATTERN})\\s*(?:[-|,:]\\s*|\\n+|\\s{2,})(${HUMAN_NAME_CAPTURE_PATTERN})`, "gi"),
     new RegExp(`(${PERSON_NAME_PATTERN})\\s*(?:[-–—|,:]\\s*|\\n+|\\s{2,})(${ROLE_PATTERN})`, "gi"),
     new RegExp(`(${ROLE_PATTERN})\\s*(?:[-–—|,:]\\s*|\\n+|\\s{2,})(${PERSON_NAME_PATTERN})`, "gi"),
   ];
 
   for (const [patternIndex, pattern] of patterns.entries()) {
     for (const match of text.matchAll(pattern)) {
-      const name = (patternIndex === 0 ? match[1] : match[2])?.trim();
-      const role = (patternIndex === 0 ? match[2] : match[1])?.trim();
+      const nameFirst = patternIndex % 2 === 0;
+      const name = (nameFirst ? match[1] : match[2])?.trim();
+      const role = (nameFirst ? match[2] : match[1])?.trim();
       if (
         !name ||
         !role ||
-        !new RegExp(`^${PERSON_NAME_PATTERN}$`).test(name) ||
-        /\b(our|the|meet|about|contact)\b/i.test(name)
+        !isLikelyHumanName(name, companyName) ||
+        !isLikelyDecisionMakerRole(role)
       ) {
         continue;
       }
@@ -172,7 +193,7 @@ function visibleCandidates(html: string, sourceUrl: string): Candidate[] {
   return candidates;
 }
 
-function structuredCandidates(html: string, sourceUrl: string): Candidate[] {
+function structuredCandidates(html: string, sourceUrl: string, companyName: string): Candidate[] {
   const candidates: Candidate[] = [];
 
   for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
@@ -195,7 +216,12 @@ function structuredCandidates(html: string, sourceUrl: string): Candidate[] {
         if (isPerson) {
           const name = cleanValue(record.name);
           const role = cleanValue(record.jobTitle) ?? cleanValue(record.role);
-          if (name && role && new RegExp(ROLE_PATTERN, "i").test(role)) {
+          if (
+            name &&
+            role &&
+            isLikelyHumanName(name, companyName) &&
+            isLikelyDecisionMakerRole(role)
+          ) {
             const email = cleanValue(record.email)?.replace(/^mailto:/i, "");
             const sameAs = Array.isArray(record.sameAs) ? record.sameAs : [record.sameAs, record.url];
             const profile = sameAs
@@ -296,13 +322,27 @@ function searchCandidate(item: SearchItem, lead: Lead): Candidate | undefined {
   const snippet = item.snippet?.trim() ?? "";
   if (!title || !link) return undefined;
 
-  const companyToken = lead.company_name.toLowerCase().split(/\s+/).find((token) => token.length > 3);
   const evidence = `${title} ${snippet}`;
-  if (!companyToken || !evidence.toLowerCase().includes(companyToken)) return undefined;
+  const evidenceText = evidence.toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  const allCompanyTokens = lead.company_name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter((token) => token.length > 2);
+  const meaningfulCompanyTokens = allCompanyTokens.filter((token) => !GENERIC_COMPANY_TOKENS.has(token));
+  const requiredTokens = (meaningfulCompanyTokens.length ? meaningfulCompanyTokens : allCompanyTokens).slice(0, 2);
+  if (!requiredTokens.length || !requiredTokens.every((token) => evidenceText.includes(token))) return undefined;
 
   const role = evidence.match(new RegExp(`\\b(${ROLE_PATTERN})\\b`, "i"))?.[1];
   const possibleName = title.split(/\s[-|–—]\s/)[0]?.trim();
-  if (!role || !possibleName || !new RegExp(`^${PERSON_NAME_PATTERN}$`).test(possibleName)) return undefined;
+  if (
+    !role ||
+    !possibleName ||
+    !isLikelyHumanName(possibleName, lead.company_name) ||
+    !isLikelyDecisionMakerRole(role)
+  ) {
+    return undefined;
+  }
 
   return {
     name: possibleName,
@@ -318,14 +358,16 @@ function searchCandidate(item: SearchItem, lead: Lead): Candidate | undefined {
 }
 
 function dedupeAndRank(lead: Lead, candidates: Candidate[]) {
-  const ranked = [...candidates].sort((left, right) => {
-    const confidenceRank: Record<DecisionMakerConfidence, number> = { high: 0, medium: 10, low: 20 };
-    return (
-      confidenceRank[left.confidence] +
-      rolePriority(lead, left.role) -
-      (confidenceRank[right.confidence] + rolePriority(lead, right.role))
-    );
-  });
+  const ranked = candidates
+    .filter((candidate) => isUsableDecisionMakerCandidate(candidate, lead.company_name))
+    .sort((left, right) => {
+      const confidenceRank: Record<DecisionMakerConfidence, number> = { high: 0, medium: 10, low: 20 };
+      return (
+        confidenceRank[left.confidence] +
+        rolePriority(lead, left.role) -
+        (confidenceRank[right.confidence] + rolePriority(lead, right.role))
+      );
+    });
   const unique = new Map<string, Candidate>();
 
   for (const candidate of ranked) {
@@ -369,7 +411,10 @@ export async function researchDecisionMakers(lead: Lead): Promise<DecisionMakerR
         });
         websiteAvailable = true;
         researchedUrls.push(page.url);
-        candidates.push(...structuredCandidates(page.html, page.url), ...visibleCandidates(page.html, page.url));
+        candidates.push(
+          ...structuredCandidates(page.html, page.url, lead.company_name),
+          ...visibleCandidates(page.html, page.url, lead.company_name),
+        );
         whatsapp = whatsapp.status === "not_checked" ? whatsappEvidence(page.html, page.url) ?? whatsapp : whatsapp;
 
         if (index === 0) {

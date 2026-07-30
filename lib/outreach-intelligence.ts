@@ -1,4 +1,5 @@
 import { getContactPageUrl } from "@/lib/contactability";
+import { isUsableDecisionMakerCandidate } from "@/lib/decision-maker-validation";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import type { DecisionMaker, DecisionMakerEmailType, Lead } from "@/lib/types";
@@ -68,7 +69,9 @@ export function classifyPublicEmail(email?: string | null, personName?: string):
 }
 
 export function getPrimaryDecisionMaker(lead: Lead): DecisionMaker | undefined {
-  const candidates = (lead.decision_makers ?? []).filter((candidate) => candidate.verification_status !== "rejected");
+  const candidates = (lead.decision_makers ?? []).filter((candidate) =>
+    isUsableDecisionMakerCandidate(candidate, lead.company_name),
+  );
   return candidates.find((candidate) => candidate.is_primary) ?? candidates[0];
 }
 
