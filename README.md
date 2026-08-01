@@ -13,7 +13,7 @@ LeadHunter is an early-access B2B prospecting workspace for agencies and outboun
 - Hacker News Firebase and Algolia APIs
 - Upstash Redis when configured
 - Vercel Queues for durable per-lead enrichment jobs
-- Optional self-hosted Crawl4AI fallback for eligible JavaScript-rendered public business websites
+- Optional self-hosted Crawl4AI `0.9.2` fallback for eligible JavaScript-rendered public business websites
 
 ## Local development
 
@@ -216,4 +216,4 @@ After adding `leadhunter.irssmex.com` in Vercel:
 
 ## Third-party acknowledgements
 
-This product includes software developed by [UncleCode](https://x.com/unclecode) as part of the [Crawl4AI project](https://github.com/unclecode/crawl4ai). Crawl4AI is used only when the separately hosted optional fallback is enabled. See [the deployment guide](docs/crawl4ai-deployment.md) for the security boundary and license notes.
+This product includes software developed by [UncleCode](https://x.com/unclecode) as part of the [Crawl4AI project](https://github.com/unclecode/crawl4ai). The optional fallback deployment is pinned to the officially released `unclecode/crawl4ai:0.9.2` image rather than `latest`. See [the signed upstream release](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.2) and [the deployment guide](docs/crawl4ai-deployment.md) for version verification, the security boundary, and license notes.

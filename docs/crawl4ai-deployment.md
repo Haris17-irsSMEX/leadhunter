@@ -4,13 +4,21 @@ Crawl4AI is an optional, separately hosted browser-rendering fallback. LeadHunte
 
 ## Reviewed image and resources
 
-- Pin `unclecode/crawl4ai:0.9.2`; do not deploy `latest`.
+- Pin `unclecode/crawl4ai:0.9.2`; do not deploy `latest`. This tag was verified against the signed official `v0.9.2` GitHub release and the upstream `docker-rebuild-v0.9.2` workflow on 2026-08-01.
+- Version `0.9.2` is newer than the `0.8.7`-`0.8.9` Docker security releases and includes their RCE, SSRF, authentication, file-write, credential-exfiltration, and proxy-SSRF fixes. It also includes the secure-by-default Docker API changes introduced in `0.9.0`.
 - Allocate at least 4 GB RAM and 1 GB shared memory initially.
 - Run the container on a Docker-capable service outside Vercel Functions.
 - Use private networking where available and require a strong bearer token.
 - Do not expose the playground, unrestricted crawl endpoint, MCP endpoints, metrics, or control endpoints publicly.
 
-Before deployment, pull and scan the exact image digest in the target registry, record that digest, and use it instead of a mutable tag where the hosting platform supports digests. Review upstream release and security notes before every upgrade.
+Pull the verified fixed tag rather than the mutable `latest` tag:
+
+```bash
+docker pull unclecode/crawl4ai:0.9.2
+docker run -d --name crawl4ai --shm-size=1g -p 127.0.0.1:11235:11235 unclecode/crawl4ai:0.9.2
+```
+
+The local-only port binding above is an example, not a complete production deployment. Before deployment, pull and scan the exact image digest in the target registry, record that digest, and use it instead of a mutable tag where the hosting platform supports digests. Review upstream release and security notes before every upgrade.
 
 ## Service contract
 
@@ -53,6 +61,8 @@ Crawl4AI is distributed under Apache License 2.0 with an upstream attribution re
 
 Official references:
 
+- [Crawl4AI v0.9.2 signed release](https://github.com/unclecode/crawl4ai/releases/tag/v0.9.2)
+- [Crawl4AI Docker release workflow](https://github.com/unclecode/crawl4ai/actions/workflows/docker-release.yml)
 - [Crawl4AI self-hosting guide](https://docs.crawl4ai.com/core/self-hosting/)
 - [Crawl4AI source and security guidance](https://github.com/unclecode/crawl4ai)
 - [Crawl4AI license](https://github.com/unclecode/crawl4ai/blob/main/LICENSE)
