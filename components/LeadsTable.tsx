@@ -8,6 +8,7 @@ import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   completeEnrichmentStatusLabel,
   completeEnrichmentStepLabel,
+  enrichmentJobStepLabel,
   getCompleteEnrichmentProgress,
 } from "@/lib/complete-enrichment-status";
 import {
@@ -24,7 +25,7 @@ import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { getCategorySummary, getCleanCategoryLabels } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
-import type { CompleteEnrichmentProgress, DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
+import type { CompleteEnrichmentProgress, DecisionMaker, DeliveryPlatformId, EnrichmentJob, EnrichmentJobItem, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
@@ -82,17 +83,7 @@ type CompleteEnrichmentApiResult = {
   progress?: CompleteEnrichmentProgress;
   message?: string;
 };
-type CompleteBulkProgress = {
-  total: number;
-  processed: number;
-  queued: number;
-  running: number;
-  complete: number;
-  partial: number;
-  notFound: number;
-  failed: number;
-  cancelled: number;
-};
+type EnrichmentJobPayload = { job: EnrichmentJob; items: EnrichmentJobItem[]; error?: string };
 type ManualDecisionMakerInput = {
   name: string;
   role: string;
@@ -1307,12 +1298,35 @@ export default function LeadsTable() {
   const [researchingDecisionMakerIds, setResearchingDecisionMakerIds] = useState<string[]>([]);
   const researchingDecisionMakerIdsRef = useRef(new Set<string>());
   const leadsRequestIdRef = useRef(0);
-  const [bulkEnrichProgress, setBulkEnrichProgress] = useState<CompleteBulkProgress | null>(null);
+  const [bulkEnrichmentJob, setBulkEnrichmentJob] = useState<EnrichmentJobPayload | null>(null);
+  const [showBulkEnrichmentConfirmation, setShowBulkEnrichmentConfirmation] = useState(false);
+  const bulkJobToastRef = useRef(new Set<string>());
   const [completeEnrichingIds, setCompleteEnrichingIds] = useState<string[]>([]);
   const completeEnrichingIdsRef = useRef(new Set<string>());
-  const bulkEnrichmentCancelRef = useRef(false);
-  const bulkEnrichmentPendingIdsRef = useRef<string[]>([]);
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
+
+  const bulkEnrichProgress = useMemo(() => {
+    const job = bulkEnrichmentJob?.job;
+    if (!job) return null;
+    return {
+      total: job.total_items,
+      processed: job.completed_items + job.partial_items + job.no_data_items + job.failed_items + job.cancelled_items,
+      queued: job.queued_items,
+      running: job.running_items,
+      complete: job.completed_items,
+      partial: job.partial_items,
+      notFound: job.no_data_items,
+      failed: job.failed_items,
+      cancelled: job.cancelled_items,
+    };
+  }, [bulkEnrichmentJob]);
+  const bulkJobRunning = Boolean(
+    bulkEnrichmentJob && ["queued", "running", "cancelling"].includes(bulkEnrichmentJob.job.status),
+  );
+  const bulkJobLeadIds = useMemo(
+    () => new Set((bulkEnrichmentJob?.items ?? []).filter((item) => item.status === "queued" || item.status === "running").map((item) => item.lead_id)),
+    [bulkEnrichmentJob?.items],
+  );
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -1420,6 +1434,46 @@ export default function LeadsTable() {
     const timer = window.setTimeout(() => setCopyMessage(""), 2000);
     return () => window.clearTimeout(timer);
   }, [copyMessage]);
+
+  useEffect(() => {
+    const jobId = bulkEnrichmentJob?.job.id;
+    if (!jobId || !bulkJobRunning) return;
+    let active = true;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
+        if (!active || !response.ok || !payload.job) return;
+        setBulkEnrichmentJob(payload);
+        const updatedLeads = payload.items.map((item) => item.lead).filter((lead): lead is Lead => Boolean(lead?.id));
+        if (updatedLeads.length) {
+          const updates = new Map(updatedLeads.map((lead) => [lead.id, lead]));
+          setLeads((current) => current.map((lead) => updates.get(lead.id) ?? lead));
+        }
+
+        if (!["queued", "running", "cancelling"].includes(payload.job.status) && !bulkJobToastRef.current.has(jobId)) {
+          bulkJobToastRef.current.add(jobId);
+          const useful = payload.job.completed_items + payload.job.partial_items;
+          showToast(
+            payload.job.status === "cancelled"
+              ? "Enrichment stopped. Results already completed were preserved."
+              : `Enrichment finished. ${useful} useful profile${useful === 1 ? "" : "s"} updated.`,
+            payload.job.failed_items || payload.job.partial_items ? "warning" : useful ? "success" : "info",
+          );
+        }
+      } catch {
+        // A later poll can recover transient progress-request failures.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [bulkEnrichmentJob?.job.id, bulkJobRunning, showToast]);
 
   const filteredLeads = useMemo(() => {
     const query = normalizeText(search);
@@ -1739,140 +1793,55 @@ export default function LeadsTable() {
   }
 
   async function enrichSelected() {
-    const targets = selectedIds.filter(Boolean);
-    if (!targets.length || bulkEnrichProgress) return;
-    if (
-      targets.length > 25 &&
-      !window.confirm(
-        `Complete enrichment will research ${targets.length} businesses using public website and search data. This may take several minutes.`,
-      )
-    ) {
-      return;
-    }
-
-    bulkEnrichmentCancelRef.current = false;
-    bulkEnrichmentPendingIdsRef.current = [...targets];
-    setBulkEnrichProgress({
-      total: targets.length,
-      processed: 0,
-      queued: targets.length,
-      running: 0,
-      complete: 0,
-      partial: 0,
-      notFound: 0,
-      failed: 0,
-      cancelled: 0,
-    });
-    const totals = { complete: 0, partial: 0, notFound: 0, failed: 0, cancelled: 0 };
-
+    const targets = [...new Set(selectedIds.filter(Boolean))].slice(0, 20);
+    if (!targets.length || bulkJobRunning) return;
     try {
-      for (let index = 0; index < targets.length; index += 5) {
-        if (bulkEnrichmentCancelRef.current) break;
-        const batch = targets.slice(index, index + 5);
-        bulkEnrichmentPendingIdsRef.current = targets.slice(index);
-        batch.forEach((id) => completeEnrichingIdsRef.current.add(id));
-        setCompleteEnrichingIds((current) => [...new Set([...current, ...batch])]);
-        setBulkEnrichProgress((current) => current ? {
-          ...current,
-          queued: Math.max(current.total - current.processed - batch.length, 0),
-          running: batch.length,
-        } : current);
-
-        const response = await fetch("/api/leads/complete-enrichment/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ leadIds: batch }),
-        });
-        const payload = (await parseResponseSafely(response)) as {
-          results?: CompleteEnrichmentApiResult[];
-          complete?: number;
-          partial?: number;
-          notFound?: number;
-          failed?: number;
-          cancelled?: number;
-          error?: string;
-        };
-        if (!response.ok) throw new Error(payload.error ?? "Complete enrichment could not be completed.");
-
-        for (const result of payload.results ?? []) {
-          if (result.lead?.id) updateLead(result.lead);
-        }
-        totals.complete += payload.complete ?? 0;
-        totals.partial += payload.partial ?? 0;
-        totals.notFound += payload.notFound ?? 0;
-        totals.failed += payload.failed ?? 0;
-        totals.cancelled += payload.cancelled ?? 0;
-        batch.forEach((id) => completeEnrichingIdsRef.current.delete(id));
-        setCompleteEnrichingIds((current) => current.filter((id) => !batch.includes(id)));
-        setBulkEnrichProgress((current) => current ? {
-          ...current,
-          processed: Math.min(current.total, current.processed + batch.length),
-          queued: Math.max(current.total - current.processed - batch.length, 0),
-          running: 0,
-          complete: current.complete + (payload.complete ?? 0),
-          partial: current.partial + (payload.partial ?? 0),
-          notFound: current.notFound + (payload.notFound ?? 0),
-          failed: current.failed + (payload.failed ?? 0),
-          cancelled: current.cancelled + (payload.cancelled ?? 0),
-        } : current);
+      const response = await fetch("/api/enrichment-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: targets, mode: "complete_outreach_profile", sourceContext: "selected_leads" }),
+      });
+      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to queue selected leads.");
+      setBulkEnrichmentJob(payload);
+      showToast(`Complete outreach enrichment queued for ${targets.length} lead${targets.length === 1 ? "" : "s"}.`, "info");
+      if (selectedIds.length > targets.length) {
+        showToast(`The first ${targets.length} selected leads were queued. Start another job for the remainder.`, "warning");
       }
-
-      const wasCancelled = bulkEnrichmentCancelRef.current;
-      showToast(
-        wasCancelled
-          ? "Pending enrichment was cancelled. Completed data was preserved."
-          : `Enrichment finished. ${totals.complete} complete, ${totals.partial} partial, ${totals.notFound} with no additional data${totals.failed ? `, ${totals.failed} failed` : ""}.`,
-        wasCancelled
-          ? "info"
-          : totals.failed || totals.partial
-            ? "warning"
-            : totals.complete
-              ? "success"
-              : "info",
-      );
     } catch (completeError) {
       const message = completeError instanceof Error ? completeError.message : "Unable to enrich selected leads.";
       setError(message);
       showToast(message, "error");
-    } finally {
-      targets.forEach((id) => completeEnrichingIdsRef.current.delete(id));
-      setCompleteEnrichingIds((current) => current.filter((id) => !targets.includes(id)));
-      bulkEnrichmentPendingIdsRef.current = [];
-      setBulkEnrichProgress(null);
     }
   }
 
   async function cancelBulkCompleteEnrichment() {
-    bulkEnrichmentCancelRef.current = true;
-    const ids = [...bulkEnrichmentPendingIdsRef.current];
-    for (let index = 0; index < ids.length; index += 5) {
-      await fetch("/api/leads/complete-enrichment/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: ids.slice(index, index + 5) }),
-      }).catch(() => undefined);
+    const jobId = bulkEnrichmentJob?.job.id;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to cancel pending enrichment.");
+      setBulkEnrichmentJob(payload);
+      showToast("Pending enrichment is being cancelled. Completed data is preserved.", "info");
+    } catch (cancelError) {
+      showToast(cancelError instanceof Error ? cancelError.message : "Unable to cancel pending enrichment.", "error");
     }
-    const cancelledAt = new Date().toISOString();
-    setLeads((current) => current.map((lead) => {
-      if (!lead.id || !ids.includes(lead.id)) return lead;
-      const metadata = lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
-        ? lead.raw_metadata
-        : {};
-      const progress = getCompleteEnrichmentProgress(lead);
-      return {
-        ...lead,
-        raw_metadata: {
-          ...metadata,
-          complete_enrichment: {
-            ...progress,
-            status: "cancelled",
-            completed_at: cancelledAt,
-            checked_at: cancelledAt,
-            cancel_requested: true,
-          },
-        },
-      };
-    }));
+  }
+
+  async function retryBulkCompleteEnrichment() {
+    const jobId = bulkEnrichmentJob?.job.id;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
+      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to retry enrichment.");
+      bulkJobToastRef.current.delete(jobId);
+      setBulkEnrichmentJob(payload);
+      showToast("Retryable enrichment items were queued again.", "info");
+    } catch (retryError) {
+      showToast(retryError instanceof Error ? retryError.message : "Unable to retry enrichment.", "error");
+    }
   }
 
   async function handleEnrichLead(id: string) {
@@ -2290,23 +2259,35 @@ export default function LeadsTable() {
                 <p>
                   Queued: {bulkEnrichProgress.queued} · Running: {bulkEnrichProgress.running} · Complete: {bulkEnrichProgress.complete} · Partial: {bulkEnrichProgress.partial} · No additional data: {bulkEnrichProgress.notFound} · Failed: {bulkEnrichProgress.failed} · Cancelled: {bulkEnrichProgress.cancelled}
                 </p>
+                {bulkEnrichmentJob?.items
+                  .filter((item) => item.status === "queued" || item.status === "running")
+                  .slice(0, 3)
+                  .map((item) => (
+                    <p key={item.id}>{item.lead?.company_name ?? "Business"}: {enrichmentJobStepLabel(item.current_step)}</p>
+                  ))}
               </div>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={bulkEnrichProgress !== null}
-              onClick={() => void enrichSelected()}
+              disabled={bulkJobRunning}
+              onClick={() => setShowBulkEnrichmentConfirmation(true)}
               className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {bulkEnrichProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {bulkEnrichProgress ? "Enriching selected..." : `Enrich selected (${selectedIds.length})`}
+              {bulkJobRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {bulkJobRunning ? "Enriching selected..." : `Enrich selected (${Math.min(selectedIds.length, 20)})`}
             </button>
-            {bulkEnrichProgress ? (
+            {bulkJobRunning ? (
               <button type="button" onClick={() => void cancelBulkCompleteEnrichment()} className="btn-secondary">
                 <X className="h-4 w-4" />
                 Cancel pending
+              </button>
+            ) : null}
+            {!bulkJobRunning && bulkEnrichProgress?.failed ? (
+              <button type="button" onClick={() => void retryBulkCompleteEnrichment()} className="btn-secondary">
+                <Sparkles className="h-4 w-4" />
+                Retry failed
               </button>
             ) : null}
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary whitespace-nowrap">
@@ -2437,7 +2418,7 @@ export default function LeadsTable() {
                         lead.id ? editDecisionMaker(lead.id, candidateId, candidate) : Promise.resolve(false)
                       }
                       isEnriching={lead.id ? enrichingIds.includes(lead.id) : false}
-                      isCompleteEnriching={lead.id ? completeEnrichingIds.includes(lead.id) : false}
+                      isCompleteEnriching={lead.id ? completeEnrichingIds.includes(lead.id) || bulkJobLeadIds.has(lead.id) : false}
                       isResearchingDecisionMaker={lead.id ? researchingDecisionMakerIds.includes(lead.id) : false}
                       onDelete={() => {
                         if (lead.id) {
@@ -2497,6 +2478,40 @@ export default function LeadsTable() {
         restaurantProfileAvailable={restaurantProfileAvailable}
         onActionComplete={() => setSelectedIds([])}
       />
+      {showBulkEnrichmentConfirmation ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(11,22,53,0.45)] p-4" role="presentation">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-enrichment-confirmation-title"
+            className="w-full max-w-lg rounded-3xl border border-[var(--border-default)] bg-white p-6 shadow-[var(--shadow-elevated)]"
+          >
+            <h2 id="bulk-enrichment-confirmation-title" className="app-section-title">Complete business enrichment</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+              LeadHunter will research public business websites and public sources for email addresses, contact pages, public profiles and decision-makers. Results will update as they are found.
+            </p>
+            <div className="mt-4 rounded-2xl bg-[var(--surface-secondary)] p-4 text-xs leading-5 text-[var(--text-secondary)]">
+              <p><strong className="text-[var(--text-primary)]">Leads to enrich:</strong> {Math.min(selectedIds.length, 20)}</p>
+              <p><strong className="text-[var(--text-primary)]">Existing recent results:</strong> {leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && ["complete", "partial", "not_found"].includes(getCompleteEnrichmentProgress(lead).status)).length} may be reused</p>
+              <p>Processing may take several minutes. Public information is not guaranteed for every business.</p>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setShowBulkEnrichmentConfirmation(false)} className="btn-secondary">Cancel</button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setShowBulkEnrichmentConfirmation(false);
+                  void enrichSelected();
+                }}
+              >
+                <Sparkles className="h-4 w-4" />
+                Start enrichment
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

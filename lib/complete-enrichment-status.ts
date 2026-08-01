@@ -2,6 +2,7 @@ import type {
   CompleteEnrichmentOverallStatus,
   CompleteEnrichmentProgress,
   CompleteEnrichmentStepStatus,
+  EnrichmentJobItem,
   Lead,
 } from "@/lib/types";
 import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
@@ -30,6 +31,31 @@ const STEP_STATUSES = new Set<CompleteEnrichmentStepStatus>([
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function completeProgressFromJobItem(item: EnrichmentJobItem): CompleteEnrichmentProgress {
+  const status: CompleteEnrichmentOverallStatus = item.status === "no_additional_data"
+    ? "not_found"
+    : item.status;
+  const activeStep: CompleteEnrichmentStepStatus = item.status === "queued"
+    ? "queued"
+    : item.status === "running"
+      ? "running"
+      : status === "not_found"
+        ? "not_found"
+        : status;
+  return {
+    status,
+    contact_status: activeStep,
+    whatsapp_status: activeStep,
+    decision_maker_status: activeStep,
+    outreach_status: activeStep,
+    requested_mode: "complete",
+    ...(item.started_at ? { started_at: item.started_at } : {}),
+    ...(item.completed_at ? { completed_at: item.completed_at } : {}),
+    ...(item.last_checked_at ? { checked_at: item.last_checked_at } : {}),
+    ...(item.safe_error_code ? { last_error_code: item.safe_error_code } : {}),
+  };
 }
 
 function overallStatus(value: unknown): CompleteEnrichmentOverallStatus {
@@ -95,4 +121,18 @@ export function completeEnrichmentStepLabel(status: CompleteEnrichmentStepStatus
   if (status === "failed") return "Failed";
   if (status === "cancelled") return "Cancelled";
   return "Not started";
+}
+
+
+export function enrichmentJobStepLabel(step: EnrichmentJobItem["current_step"]) {
+  if (step === "loading_business_profile") return "Loading business profile";
+  if (step === "scanning_website") return "Scanning website";
+  if (step === "rendering_website") return "Rendering website";
+  if (step === "finding_public_contact_details") return "Finding public contact details";
+  if (step === "researching_decision_maker") return "Researching decision-maker";
+  if (step === "building_outreach_profile") return "Building outreach profile";
+  if (step === "no_additional_data") return "No additional public data";
+  if (step === "failed") return "Failed - retry available";
+  if (step === "partial") return "Partial result";
+  return completeEnrichmentStatusLabel(step === "complete" || step === "cancelled" || step === "queued" ? step : "running");
 }

@@ -46,6 +46,15 @@ export async function acquireWorkloadLease(key: string, ttlSeconds: number): Pro
   };
 }
 
+export async function acquireWorkloadSlot(prefix: string, slots: number, ttlSeconds: number): Promise<WorkloadLease | null> {
+  const boundedSlots = Math.min(Math.max(Math.floor(slots), 1), 20);
+  for (let index = 0; index < boundedSlots; index += 1) {
+    const lease = await acquireWorkloadLease(`${prefix}:${index}`, ttlSeconds);
+    if (lease) return lease;
+  }
+  return null;
+}
+
 export async function startCooldown(key: string, ttlSeconds: number) {
   const boundedTtl = Math.min(Math.max(Math.floor(ttlSeconds), 5), 24 * 60 * 60);
   if (redis) {

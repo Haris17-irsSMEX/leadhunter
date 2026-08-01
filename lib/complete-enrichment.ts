@@ -1,6 +1,7 @@
 import "server-only";
 
 import { PublicApiError } from "@/lib/api-errors";
+import { crawlPublicBusinessPages } from "@/lib/crawl4ai-client";
 import { getAllowedUserIds } from "@/lib/auth";
 import { getCompleteEnrichmentProgress } from "@/lib/complete-enrichment-status";
 import { getContactPageUrl } from "@/lib/contactability";
@@ -9,7 +10,7 @@ import { researchLeadDecisionMakers } from "@/lib/decision-maker-service";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { classifyPublicEmail, getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
-import { createPublicWebResearchContext } from "@/lib/public-web";
+import { createPublicWebResearchContext, normalizePublicWebsiteUrl, seedPublicWebResearchPage } from "@/lib/public-web";
 import { redis } from "@/lib/redis";
 import { findPublicBusinessEmail, type PublicEmailResult } from "@/lib/restaurant-email";
 import { logWorkflowEvent, operationalError } from "@/lib/operational-errors";
@@ -20,11 +21,26 @@ import type {
   CompleteEnrichmentOverallStatus,
   CompleteEnrichmentProgress,
   CompleteEnrichmentStepStatus,
+  EnrichmentJobStep,
   Lead,
 } from "@/lib/types";
 
 type UserIdentity = Pick<User, "id" | "email">;
 type EnrichmentLease = { release: () => Promise<void> };
+
+const EMPTY_ENRICHMENT_METRICS = {
+  websiteFetches: 0,
+  websitePagesFetched: 0,
+  publicSearchRequests: 0,
+  cacheHits: 0,
+  cacheMisses: 0,
+  providerFailures: 0,
+  rejectedCandidates: 0,
+  browserFallbackUsed: false,
+  browserFallbackStatus: "not_used" as const,
+  browserFallbackPages: 0,
+  durationMs: 0,
+};
 
 const memoryLeadLocks = new Map<string, number>();
 const memoryUserActive = new Map<string, number>();
@@ -241,10 +257,41 @@ function resultMessage(status: CompleteEnrichmentOverallStatus, lead: Lead) {
   return "Complete enrichment could not be finished. Retry is available.";
 }
 
+async function directContextTextLength(context: ReturnType<typeof createPublicWebResearchContext>) {
+  const pages = await Promise.allSettled([...context.cache.values()]);
+  return pages.reduce((total, result) => {
+    if (result.status !== "fulfilled") return total;
+    return total + result.value.html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .length;
+  }, 0);
+}
+
+function crawlFallbackUrls(website: string, cachedUrls: string[]) {
+  const origin = normalizePublicWebsiteUrl(website);
+  if (!origin) return [];
+  return [
+    origin.href,
+    ...cachedUrls,
+    new URL("/contact", origin).href,
+    new URL("/about", origin).href,
+    new URL("/team", origin).href,
+    new URL("/leadership", origin).href,
+  ];
+}
+
 export async function completeLeadEnrichment(
   user: UserIdentity,
   leadId: string,
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    maxPages?: number;
+    onStep?: (step: EnrichmentJobStep) => void | Promise<void>;
+  } = {},
 ) {
   await assertRateLimit(user.id);
   let lead = await loadLead(user, leadId);
@@ -263,6 +310,7 @@ export async function completeLeadEnrichment(
       outreach: getOutreachIntelligence(attached),
       emailType: classifyPublicEmail(attached.email),
       cached: true,
+      metrics: EMPTY_ENRICHMENT_METRICS,
       warnings: [] as string[],
       message: "Recent complete-enrichment results were reused.",
     };
@@ -279,6 +327,7 @@ export async function completeLeadEnrichment(
       outreach: getOutreachIntelligence(attached),
       emailType: classifyPublicEmail(attached.email),
       cached: true,
+      metrics: EMPTY_ENRICHMENT_METRICS,
       warnings: [] as string[],
       message: "Complete enrichment is already running for this lead.",
     };
@@ -293,6 +342,7 @@ export async function completeLeadEnrichment(
       outreach: getOutreachIntelligence(attached),
       emailType: classifyPublicEmail(attached.email),
       cached: true,
+      metrics: EMPTY_ENRICHMENT_METRICS,
       warnings: ["This lead is already queued or running."],
       message: "Complete enrichment is already queued or running.",
     };
@@ -323,15 +373,55 @@ export async function completeLeadEnrichment(
       raw_metadata: mergeProgressMetadata(lead, progress),
     });
 
-    const context = createPublicWebResearchContext();
+    const context = createPublicWebResearchContext(options.maxPages);
+    await options.onStep?.("finding_public_contact_details");
     const contactPromise: Promise<PublicEmailResult> = lead.website?.trim()
       ? findPublicBusinessEmail(lead.website, context, { forceRefresh: options.force === true })
       : Promise.resolve({ status: "not_checked" as const });
+    await options.onStep?.("researching_decision_maker");
     const decisionMakerPromise = researchLeadDecisionMakers(user, leadId, {
       force: options.force,
       context,
     });
-    const [contactResult, decisionMakerResult] = await Promise.allSettled([contactPromise, decisionMakerPromise]);
+    let [contactResult, decisionMakerResult] = await Promise.allSettled([contactPromise, decisionMakerPromise]);
+    let browserFallbackStatus: "not_used" | "completed" | "unavailable" | "not_eligible" | "robots_disallowed" | "error" = "not_used";
+    let browserFallbackPages = 0;
+    const directContact = contactResult.status === "fulfilled" ? contactResult.value : null;
+    const directCandidates = decisionMakerResult.status === "fulfilled" ? decisionMakerResult.value.candidates : [];
+    const directUseful = Boolean(
+      cleanSafePublicEmail(lead.email) ||
+      cleanSafePublicEmail(directContact?.email) ||
+      directContact?.contactPageUrl ||
+      directCandidates.length,
+    );
+    if (lead.website?.trim() && !directUseful && (await directContextTextLength(context)) < 800) {
+      await options.onStep?.("rendering_website");
+      const fallback = await crawlPublicBusinessPages(
+        lead.website,
+        crawlFallbackUrls(lead.website, [...context.cache.keys()]),
+      );
+      browserFallbackStatus = fallback.status;
+      browserFallbackPages = fallback.pages.length;
+      if (fallback.status === "completed" && fallback.pages.length) {
+        fallback.pages.forEach((page) => seedPublicWebResearchPage(context, page, { replace: true }));
+        await options.onStep?.("finding_public_contact_details");
+        const fallbackContactPromise = findPublicBusinessEmail(lead.website, context, { forceRefresh: true });
+        await options.onStep?.("researching_decision_maker");
+        const fallbackDecisionPromise = researchLeadDecisionMakers(user, leadId, {
+          context,
+          bypassFreshness: true,
+        });
+        const [fallbackContact, fallbackDecision] = await Promise.allSettled([
+          fallbackContactPromise,
+          fallbackDecisionPromise,
+        ]);
+        if (fallbackContact.status === "fulfilled") contactResult = fallbackContact;
+        if (fallbackDecision.status === "fulfilled") decisionMakerResult = fallbackDecision;
+      } else if (fallback.safeErrorCode) {
+        warnings.push("Browser rendering was unavailable. Direct website results were preserved.");
+        errorCodes.push(fallback.safeErrorCode);
+      }
+    }
 
     let contactStatus: CompleteEnrichmentStepStatus = lead.website?.trim() ? "not_found" : "skipped";
     const currentEmail = cleanSafePublicEmail(lead.email);
@@ -391,6 +481,7 @@ export async function completeLeadEnrichment(
 
     const latest = await loadLead(user, leadId);
     lead = { ...latest, decision_makers: candidates };
+    await options.onStep?.("building_outreach_profile");
     const currentProgress = getCompleteEnrichmentProgress(lead);
     const cancelled = currentProgress.cancel_requested === true || currentProgress.status === "cancelled";
     const metrics = {
@@ -403,11 +494,27 @@ export async function completeLeadEnrichment(
       cacheHits:
         (contactResult.status === "fulfilled" && contactResult.value.cached ? 1 : 0) +
         (decisionMakerResult.status === "fulfilled" ? decisionMakerResult.value.metrics.cacheHits : 0),
+      cacheMisses: Math.max(
+        context.requestsStarted -
+          ((contactResult.status === "fulfilled" && contactResult.value.cached ? 1 : 0) +
+            (decisionMakerResult.status === "fulfilled" ? decisionMakerResult.value.metrics.cacheHits : 0)),
+        0,
+      ),
       providerFailures: errorCodes.length,
+      rejectedCandidates: decisionMakerResult.status === "fulfilled"
+        ? decisionMakerResult.value.metrics.invalidCandidatesRejected
+        : 0,
+      browserFallbackUsed: browserFallbackStatus !== "not_used" && browserFallbackStatus !== "not_eligible",
+      browserFallbackStatus,
+      browserFallbackPages,
+      durationMs: Math.max(Date.now() - new Date(startedAt).getTime(), 0),
     };
-    const overallStatus = cancelled
+    let overallStatus = cancelled
       ? "cancelled"
       : finalOverallStatus(lead, [contactStatus, decisionStatus, whatsappStatus]);
+    if (!cancelled && overallStatus === "not_found" && ["unavailable", "error"].includes(browserFallbackStatus)) {
+      overallStatus = "partial";
+    }
     const now = new Date().toISOString();
     progress = {
       status: overallStatus,
@@ -439,7 +546,12 @@ export async function completeLeadEnrichment(
       websitePagesFetched: metrics.websitePagesFetched,
       publicSearchRequests: metrics.publicSearchRequests,
       cacheHits: metrics.cacheHits,
+      cacheMisses: metrics.cacheMisses,
       providerFailures: metrics.providerFailures,
+      rejectedCandidates: metrics.rejectedCandidates,
+      browserFallbackUsed: metrics.browserFallbackUsed,
+      browserFallbackPages: metrics.browserFallbackPages,
+      durationMs: metrics.durationMs,
     });
 
     return {

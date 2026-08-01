@@ -23,7 +23,7 @@ export type PublicWebResearchContext = {
   requestsStarted: number;
 };
 
-export function createPublicWebResearchContext(maxPages = WORKLOAD_LIMITS.websiteResearch.maxPages): PublicWebResearchContext {
+export function createPublicWebResearchContext(maxPages: number = WORKLOAD_LIMITS.websiteResearch.maxPages): PublicWebResearchContext {
   return {
     cache: new Map(),
     maxPages: Math.min(Math.max(Math.floor(maxPages), 1), WORKLOAD_LIMITS.websiteResearch.maxPages),
@@ -117,7 +117,7 @@ export function sameRegistrableHost(left: URL | string, right: URL | string) {
   }
 }
 
-async function assertPublicDestination(url: URL) {
+export async function assertSafePublicUrl(url: URL) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Only public HTTP and HTTPS pages can be researched.");
   }
@@ -211,7 +211,7 @@ async function fetchPublicWebPageUncached(
   }
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
-    await assertPublicDestination(current);
+    await assertSafePublicUrl(current);
 
     const response: Response = await fetch(current, {
       method: "GET",
@@ -249,6 +249,42 @@ async function fetchPublicWebPageUncached(
   }
 
   throw new Error("Public page redirected too many times.");
+}
+
+export async function isPublicWebCrawlAllowed(target: URL) {
+  const robotsUrl = new URL("/robots.txt", target.origin);
+  try {
+    const page = await fetchPublicWebPage(robotsUrl, { timeoutMs: 3_000, maxBytes: 50_000, maxRedirects: 1 });
+    const groups = page.html.split(/(?=^user-agent\s*:)/gim);
+    const applicable = groups.filter((group) => /^user-agent\s*:\s*(?:\*|leadhunter)/im.test(group));
+    for (const group of applicable) {
+      const disallowed = [...group.matchAll(/^disallow\s*:\s*([^#\r\n]*)/gim)]
+        .map((match) => match[1].trim())
+        .filter(Boolean);
+      if (disallowed.some((path) => target.pathname.startsWith(path))) return false;
+    }
+    return true;
+  } catch {
+    // Missing or temporarily unavailable robots.txt should not turn public research into an application failure.
+    return true;
+  }
+}
+
+function escapeSyntheticHtml(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+export function seedPublicWebResearchPage(
+  context: PublicWebResearchContext,
+  page: { url: string; title?: string; text: string; links?: string[] },
+  options: { replace?: boolean } = {},
+) {
+  const normalized = normalizePublicWebsiteUrl(page.url);
+  if (!normalized || (context.cache.has(normalized.href) && !options.replace)) return false;
+  const links = (page.links ?? []).slice(0, 100).map((href) => `<a href="${escapeSyntheticHtml(href)}"></a>`).join("");
+  const html = `<html><head><title>${escapeSyntheticHtml(page.title ?? "")}</title></head><body>${escapeSyntheticHtml(page.text)}${links}</body></html>`;
+  context.cache.set(normalized.href, Promise.resolve({ url: normalized.href, html, contentType: "text/html" }));
+  return true;
 }
 
 export async function fetchPublicWebPage(

@@ -6,7 +6,9 @@ import { Building2, Globe, Link2, Loader2, MapPin, MessageCircle, Search, Sparkl
 import JobStatusCard from "@/components/JobStatusCard";
 import MonthlyLimitNotice from "@/components/MonthlyLimitNotice";
 import {
+  completeProgressFromJobItem,
   completeEnrichmentStatusLabel,
+  enrichmentJobStepLabel,
   getCompleteEnrichmentProgress,
 } from "@/lib/complete-enrichment-status";
 import { getBestContactMethod, getContactPageUrl, getContactabilityStatus } from "@/lib/contactability";
@@ -16,7 +18,7 @@ import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { getCategorySummary } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence, isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
-import type { CompleteEnrichmentProgress, DeliveryPlatformId, Lead } from "@/lib/types";
+import type { DeliveryPlatformId, EnrichmentJob, EnrichmentJobItem, Lead } from "@/lib/types";
 import type { UsageSummary } from "@/lib/usage";
 import { useToast } from "@/lib/useToast";
 
@@ -111,24 +113,7 @@ type CityScanResult = {
 
 type CitySuggestion = { placeId: string; label: string };
 
-type CompleteEnrichmentApiResult = {
-  leadId?: string;
-  success?: boolean;
-  lead?: Lead;
-  progress?: CompleteEnrichmentProgress;
-  message?: string;
-};
-
-function queuedCompleteProgress(): CompleteEnrichmentProgress {
-  return {
-    status: "queued",
-    contact_status: "queued",
-    whatsapp_status: "queued",
-    decision_maker_status: "queued",
-    outreach_status: "queued",
-    requested_mode: "complete",
-  };
-}
+type EnrichmentJobPayload = { job: EnrichmentJob; items: EnrichmentJobItem[]; error?: string };
 
 type DirectoryResult = {
   count: number;
@@ -470,10 +455,9 @@ export default function FinderPage() {
   const [mapsDeliveryPlatforms, setMapsDeliveryPlatforms] = useState<DeliveryPlatformId[]>(defaultDeliveryPlatforms);
   const [mapsDeliveryFilter, setMapsDeliveryFilter] = useState<DeliveryFilter>("all");
   const [mapsResult, setMapsResult] = useState<MapsResult | null>(null);
-  const [mapsCompleteProgress, setMapsCompleteProgress] = useState<Record<string, CompleteEnrichmentProgress>>({});
-  const [mapsCompleteRunning, setMapsCompleteRunning] = useState(false);
-  const mapsCompleteCancelRef = useRef(false);
-  const mapsCompletePendingIdsRef = useRef<string[]>([]);
+  const [mapsEnrichmentJob, setMapsEnrichmentJob] = useState<EnrichmentJobPayload | null>(null);
+  const [mapsEnrichmentConfirmation, setMapsEnrichmentConfirmation] = useState<Lead[] | null>(null);
+  const mapsJobToastRef = useRef<Set<string>>(new Set());
   const [cityScanCity, setCityScanCity] = useState("");
   const [cityScanCategoryGroups, setCityScanCategoryGroups] = useState<CityScanCategoryGroupId[]>([...CITY_SCAN_CATEGORY_GROUP_IDS]);
   const [cityScanMax, setCityScanMax] = useState(25);
@@ -504,22 +488,28 @@ export default function FinderPage() {
     mapsRestaurantEnrichment &&
       (mapsSearchLooksRestaurant || mapsResult?.leads.some(hasMeaningfulRestaurantIntelligence)),
   );
+  const mapsCompleteProgress = useMemo(
+    () => Object.fromEntries((mapsEnrichmentJob?.items ?? []).map((item) => [item.lead_id, completeProgressFromJobItem(item)])),
+    [mapsEnrichmentJob?.items],
+  );
+  const mapsCompleteRunning = Boolean(
+    mapsEnrichmentJob && ["queued", "running", "cancelling"].includes(mapsEnrichmentJob.job.status),
+  );
   const mapsResultHasNoEmails =
     Boolean(mapsResult?.leads.length) &&
     Boolean(mapsResult?.leads.every((lead) => !cleanSafePublicEmail(lead.email))) &&
-    !(mapsEnrichmentMode === "complete" && mapsCompleteRunning);
-  const mapsCompleteCounts = useMemo(() => {
-    const values = Object.values(mapsCompleteProgress);
-    return {
-      total: values.length,
-      complete: values.filter((item) => item.status === "complete").length,
-      partial: values.filter((item) => item.status === "partial").length,
-      notFound: values.filter((item) => item.status === "not_found").length,
-      failed: values.filter((item) => item.status === "failed").length,
-      cancelled: values.filter((item) => item.status === "cancelled").length,
-      processing: values.filter((item) => item.status === "queued" || item.status === "running").length,
-    };
-  }, [mapsCompleteProgress]);
+    !mapsCompleteRunning;
+  const mapsCompleteCounts = useMemo(() => ({
+    total: mapsEnrichmentJob?.job.total_items ?? 0,
+    complete: mapsEnrichmentJob?.job.completed_items ?? 0,
+    partial: mapsEnrichmentJob?.job.partial_items ?? 0,
+    notFound: mapsEnrichmentJob?.job.no_data_items ?? 0,
+    failed: mapsEnrichmentJob?.job.failed_items ?? 0,
+    cancelled: mapsEnrichmentJob?.job.cancelled_items ?? 0,
+    queued: mapsEnrichmentJob?.job.queued_items ?? 0,
+    running: mapsEnrichmentJob?.job.running_items ?? 0,
+    processing: (mapsEnrichmentJob?.job.queued_items ?? 0) + (mapsEnrichmentJob?.job.running_items ?? 0),
+  }), [mapsEnrichmentJob]);
   const cityScanLimitOptions = useMemo(() => {
     if (!usageSummary || usageSummary.isAdmin) return [25, 50, 100];
     if (usageSummary.remaining <= 0) return [];
@@ -550,6 +540,50 @@ export default function FinderPage() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    const jobId = mapsEnrichmentJob?.job.id;
+    if (!jobId || !mapsCompleteRunning) return;
+    let active = true;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+        const payload = (await response.json()) as EnrichmentJobPayload;
+        if (!active || !response.ok || !payload.job) return;
+        setMapsEnrichmentJob(payload);
+        const updatedLeads = payload.items.map((item) => item.lead).filter((lead): lead is Lead => Boolean(lead?.id));
+        if (updatedLeads.length) {
+          const updates = new Map(updatedLeads.map((lead) => [lead.id, lead]));
+          setMapsResult((current) => current
+            ? { ...current, leads: current.leads.map((lead) => updates.get(lead.id) ?? lead) }
+            : current);
+          setCityScanResult((current) => current
+            ? { ...current, leads: current.leads.map((lead) => updates.get(lead.id) ?? lead) }
+            : current);
+        }
+        if (!["queued", "running", "cancelling"].includes(payload.job.status) && !mapsJobToastRef.current.has(jobId)) {
+          mapsJobToastRef.current.add(jobId);
+          const useful = payload.job.completed_items + payload.job.partial_items;
+          showToast(
+            payload.job.status === "cancelled"
+              ? "Enrichment stopped. Results already completed were preserved."
+              : `Enrichment finished. ${useful} useful profile${useful === 1 ? "" : "s"} updated.`,
+            payload.job.failed_items || payload.job.partial_items ? "warning" : useful ? "success" : "info",
+          );
+        }
+      } catch {
+        // A later poll can recover transient progress-request failures.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [mapsEnrichmentJob?.job.id, mapsCompleteRunning, showToast]);
 
   useEffect(() => {
     let active = true;
@@ -800,136 +834,70 @@ export default function FinderPage() {
   }
 
   async function runMapsCompleteEnrichment(targetLeads: Lead[]) {
-    const leadIds = [...new Set(targetLeads.map((lead) => lead.id).filter((id): id is string => Boolean(id)))];
+    const leadIds = [...new Set(targetLeads.map((lead) => lead.id).filter((id): id is string => Boolean(id)))].slice(0, 20);
     if (!leadIds.length) {
       showToast("Base leads were saved, but no enrichment targets were available.", "warning");
       return;
     }
-
-    let progressState = Object.fromEntries(leadIds.map((id) => [id, queuedCompleteProgress()]));
-    setMapsCompleteProgress(progressState);
-    mapsCompletePendingIdsRef.current = [...leadIds];
-    mapsCompleteCancelRef.current = false;
-    setMapsCompleteRunning(true);
-
     try {
-      for (let index = 0; index < leadIds.length; index += 5) {
-        if (mapsCompleteCancelRef.current) break;
-        const batch = leadIds.slice(index, index + 5);
-        progressState = {
-          ...progressState,
-          ...Object.fromEntries(
-            batch.map((id) => [id, { ...progressState[id], status: "running" as const, contact_status: "running" as const, decision_maker_status: "running" as const }]),
-          ),
-        };
-        setMapsCompleteProgress(progressState);
-
-        try {
-          const response = await fetch("/api/leads/complete-enrichment/bulk", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ leadIds: batch }),
-          });
-          const payload = (await response.json()) as {
-            results?: CompleteEnrichmentApiResult[];
-            error?: string;
-          };
-          if (!response.ok) throw new Error(payload.error ?? "Complete enrichment could not be completed.");
-
-          const returnedIds = new Set<string>();
-          for (const result of payload.results ?? []) {
-            if (!result.leadId) continue;
-            returnedIds.add(result.leadId);
-            progressState = {
-              ...progressState,
-              [result.leadId]: result.progress ?? {
-                ...progressState[result.leadId],
-                status: result.success ? "partial" : "failed",
-                contact_status: result.success ? "partial" : "failed",
-                whatsapp_status: result.success ? "partial" : "failed",
-                decision_maker_status: result.success ? "partial" : "failed",
-                outreach_status: result.success ? "complete" : "failed",
-              },
-            };
-            if (result.lead?.id) {
-              const updatedLead = result.lead;
-              setMapsResult((current) => current
-                ? { ...current, leads: current.leads.map((lead) => (lead.id === updatedLead.id ? updatedLead : lead)) }
-                : current);
-              setCityScanResult((current) => current
-                ? { ...current, leads: current.leads.map((lead) => (lead.id === updatedLead.id ? updatedLead : lead)) }
-                : current);
-            }
-          }
-          for (const id of batch.filter((id) => !returnedIds.has(id))) {
-            progressState = { ...progressState, [id]: { ...progressState[id], status: "failed" } };
-          }
-        } catch {
-          for (const id of batch) {
-            progressState = {
-              ...progressState,
-              [id]: {
-                ...progressState[id],
-                status: "failed",
-                contact_status: "failed",
-                whatsapp_status: "failed",
-                decision_maker_status: "failed",
-                outreach_status: "failed",
-              },
-            };
-          }
-        }
-
-        mapsCompletePendingIdsRef.current = leadIds.slice(index + batch.length);
-        setMapsCompleteProgress(progressState);
+      const response = await fetch("/api/enrichment-jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds, mode: "complete_outreach_profile", sourceContext: "recent_search" }),
+      });
+      const payload = (await response.json()) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Complete enrichment could not be queued.");
+      setMapsEnrichmentJob(payload);
+      showToast(
+        `Complete outreach enrichment queued for ${leadIds.length} lead${leadIds.length === 1 ? "" : "s"}.`,
+        "info",
+      );
+      if (targetLeads.length > leadIds.length) {
+        showToast(`The first ${leadIds.length} leads were queued. Enrich the remaining leads in another job.`, "warning");
       }
-
-      if (mapsCompleteCancelRef.current) {
-        for (const id of mapsCompletePendingIdsRef.current) {
-          progressState = {
-            ...progressState,
-            [id]: {
-              ...progressState[id],
-              status: "cancelled",
-              contact_status: "cancelled",
-              whatsapp_status: "cancelled",
-              decision_maker_status: "cancelled",
-              outreach_status: "cancelled",
-            },
-          };
-        }
-        setMapsCompleteProgress(progressState);
-        showToast("Pending enrichment was cancelled. Completed results were preserved.", "info");
-      } else {
-        const values = Object.values(progressState);
-        const useful = values.filter((item) => item.status === "complete" || item.status === "partial").length;
-        const failed = values.filter((item) => item.status === "failed").length;
-        showToast(
-          `Complete enrichment finished for ${values.length} lead${values.length === 1 ? "" : "s"}. ${useful} useful profile${useful === 1 ? "" : "s"} updated.`,
-          failed ? "warning" : useful ? "success" : "info",
-        );
-      }
-    } finally {
-      mapsCompletePendingIdsRef.current = [];
-      setMapsCompleteRunning(false);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Complete enrichment could not be queued.", "error");
     }
   }
 
+  function requestMapsCompleteEnrichment(targetLeads: Lead[]) {
+    const targets = targetLeads
+      .filter((lead) => Boolean(lead.id))
+      .filter((lead, index, items) => items.findIndex((item) => item.id === lead.id) === index)
+      .slice(0, 20);
+    if (!targets.length) {
+      showToast("No saved leads are available for complete enrichment.", "info");
+      return;
+    }
+    setMapsEnrichmentConfirmation(targets);
+  }
+
   async function cancelMapsCompleteEnrichment() {
-    mapsCompleteCancelRef.current = true;
-    const pendingIds = Object.entries(mapsCompleteProgress)
-      .filter(([, progress]) => progress.status === "queued" || progress.status === "running")
-      .map(([id]) => id);
-    for (let index = 0; index < pendingIds.length; index += 5) {
-      try {
-        await fetch("/api/leads/complete-enrichment/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ leadIds: pendingIds.slice(index, index + 5) }),
-        });
-      } catch {
-        // Client cancellation still stops new batches; active requests may finish safely.
-      }
+    const jobId = mapsEnrichmentJob?.job.id;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
+      const payload = (await response.json()) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Enrichment could not be cancelled.");
+      setMapsEnrichmentJob(payload);
+      showToast("Pending enrichment is being cancelled. Completed results are preserved.", "info");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Enrichment could not be cancelled.", "error");
+    }
+  }
+
+  async function retryMapsCompleteEnrichment() {
+    const jobId = mapsEnrichmentJob?.job.id;
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
+      const payload = (await response.json()) as EnrichmentJobPayload;
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Enrichment could not be retried.");
+      mapsJobToastRef.current.delete(jobId);
+      setMapsEnrichmentJob(payload);
+      showToast("Retryable enrichment items were queued again.", "info");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Enrichment could not be retried.", "error");
     }
   }
 
@@ -938,18 +906,10 @@ export default function FinderPage() {
       showToast("Monthly lead limit reached. No additional leads were added.", "warning");
       return;
     }
-    if (
-      mapsEnrichmentMode === "complete" &&
-      mapsCount > 25 &&
-      !window.confirm(`Complete enrichment will research up to ${mapsCount} businesses using public website and search data. This may take several minutes.`)
-    ) {
-      return;
-    }
-
     setMapsLoading(true);
     setMapsError("");
     setMapsResult(null);
-    setMapsCompleteProgress({});
+    setMapsEnrichmentJob(null);
 
     try {
       const response = await fetch("/api/scrape/maps", {
@@ -989,7 +949,7 @@ export default function FinderPage() {
       }
 
       if (mapsEnrichmentMode === "complete" && data.leads.length) {
-        void runMapsCompleteEnrichment(data.leads);
+        requestMapsCompleteEnrichment(data.leads);
       }
     } catch (error) {
       handleFinderRequestError(error, "Unable to search Google Maps.", setMapsError);
@@ -1006,7 +966,7 @@ export default function FinderPage() {
     setMapsResult(null);
     setCityScanResult(null);
     setCityScanSuggestions([]);
-    setMapsCompleteProgress({});
+    setMapsEnrichmentJob(null);
     if (mode === "city_scan") {
       setMapsRestaurantEnrichment(false);
       setMapsWebsiteFilter("no_website");
@@ -1048,7 +1008,7 @@ export default function FinderPage() {
               : `City scan found ${current.leads.length} no-website opportunities.`,
             current.status === "partial" ? "warning" : "success",
           );
-          if (current.enrichmentMode === "complete") void runMapsCompleteEnrichment(current.leads);
+          if (current.enrichmentMode === "complete") requestMapsCompleteEnrichment(current.leads);
         } else {
           showToast("No businesses without a listed website were discovered in the completed scan.", "info");
         }
@@ -1930,9 +1890,22 @@ export default function FinderPage() {
                       Requested {mapsResult.requested ?? mapsCount} · Found {mapsResult.count} · Saved {mapsResult.inserted ?? mapsResult.count} new · {mapsResult.skippedDuplicates ?? 0} already in workspace
                     </p>
                   </div>
-                  <Link href="/leads" className="btn-secondary">
-                    View in My Leads
-                  </Link>
+                  <div className="flex flex-wrap gap-2">
+                    {mapsResult.leads.length ? (
+                      <button
+                        type="button"
+                        onClick={() => requestMapsCompleteEnrichment(mapsResult.leads)}
+                        disabled={mapsCompleteRunning}
+                        className="btn-primary disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {mapsCompleteRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        {mapsCompleteRunning ? "Enriching..." : `Enrich recent ${Math.min(mapsResult.leads.length, 20)}`}
+                      </button>
+                    ) : null}
+                    <Link href="/leads" className="btn-secondary">
+                      View in My Leads
+                    </Link>
+                  </div>
                 </div>
 
                 {mapsResult.warnings?.length ? (
@@ -1945,7 +1918,7 @@ export default function FinderPage() {
                   </div>
                 ) : null}
 
-                {mapsEnrichmentMode === "complete" && mapsCompleteCounts.total ? (
+                {mapsCompleteCounts.total ? (
                   <div className="app-alert app-alert-info mt-5" aria-live="polite">
                     <Sparkles className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
@@ -1955,13 +1928,29 @@ export default function FinderPage() {
                             Enriched {mapsCompleteCounts.total - mapsCompleteCounts.processing} of {mapsCompleteCounts.total} leads
                           </p>
                           <p className="mt-1 text-xs">
-                            Complete: {mapsCompleteCounts.complete} · Partial: {mapsCompleteCounts.partial} · No additional data: {mapsCompleteCounts.notFound} · Processing: {mapsCompleteCounts.processing}
+                            Complete: {mapsCompleteCounts.complete} · Partial: {mapsCompleteCounts.partial} · Processing: {mapsCompleteCounts.running} · Queued: {mapsCompleteCounts.queued} · No additional data: {mapsCompleteCounts.notFound} · Failed: {mapsCompleteCounts.failed}
                           </p>
+                          {mapsEnrichmentJob?.items.some((item) => item.status === "queued" || item.status === "running") ? (
+                            <div className="mt-2 space-y-1 text-xs" aria-live="polite">
+                              {mapsEnrichmentJob.items
+                                .filter((item) => item.status === "queued" || item.status === "running")
+                                .slice(0, 3)
+                                .map((item) => (
+                                  <p key={item.id}>{item.lead?.company_name ?? "Business"}: {enrichmentJobStepLabel(item.current_step)}</p>
+                                ))}
+                            </div>
+                          ) : null}
                         </div>
                         {mapsCompleteRunning ? (
                           <button type="button" onClick={() => void cancelMapsCompleteEnrichment()} className="btn-secondary shrink-0 px-3 py-2 text-xs">
                             <X className="h-3.5 w-3.5" />
                             Cancel pending
+                          </button>
+                        ) : null}
+                        {!mapsCompleteRunning && mapsCompleteCounts.failed ? (
+                          <button type="button" onClick={() => void retryMapsCompleteEnrichment()} className="btn-secondary shrink-0 px-3 py-2 text-xs">
+                            <Sparkles className="h-3.5 w-3.5" />
+                            Retry failed
                           </button>
                         ) : null}
                       </div>
@@ -2043,7 +2032,7 @@ export default function FinderPage() {
                             ) : null}
                             <td className="px-4 py-4">
                               <div className="space-y-2">
-                                {mapsEnrichmentMode === "complete"
+                                {mapsEnrichmentMode === "complete" || (lead.id ? Boolean(mapsCompleteProgress[lead.id]) : false)
                                   ? (() => {
                                       const progress = lead.id
                                         ? mapsCompleteProgress[lead.id] ?? getCompleteEnrichmentProgress(lead)
@@ -2425,6 +2414,50 @@ export default function FinderPage() {
           </div>
         ) : null}
       </section>
+      {mapsEnrichmentConfirmation ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(11,22,53,0.45)] p-4" role="presentation">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="enrichment-confirmation-title"
+            className="w-full max-w-lg rounded-3xl border border-[var(--border-default)] bg-white p-6 shadow-[var(--shadow-elevated)]"
+          >
+            <div className="flex items-start gap-4">
+              <div className="rounded-2xl bg-[var(--primary-soft)] p-3 text-[var(--accent)]">
+                <Sparkles className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div>
+                <h2 id="enrichment-confirmation-title" className="app-section-title">Complete business enrichment</h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
+                  LeadHunter will research public business websites and public sources for email addresses, contact pages, public profiles and decision-makers. Results will update as they are found.
+                </p>
+                <div className="mt-4 rounded-2xl bg-[var(--surface-secondary)] p-4 text-xs leading-5 text-[var(--text-secondary)]">
+                  <p><strong className="text-[var(--text-primary)]">Leads to enrich:</strong> {mapsEnrichmentConfirmation.length}</p>
+                  <p><strong className="text-[var(--text-primary)]">Existing recent results:</strong> {mapsEnrichmentConfirmation.filter((lead) => ["complete", "partial", "not_found"].includes(getCompleteEnrichmentProgress(lead).status)).length} may be reused</p>
+                  <p>Processing may take several minutes. Public information is not guaranteed for every business.</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setMapsEnrichmentConfirmation(null)} className="btn-secondary">
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  const targets = mapsEnrichmentConfirmation;
+                  setMapsEnrichmentConfirmation(null);
+                  void runMapsCompleteEnrichment(targets);
+                }}
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                Start enrichment
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

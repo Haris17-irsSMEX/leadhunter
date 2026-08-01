@@ -125,6 +125,80 @@ export interface CompleteEnrichmentProgress {
   cached?: boolean;
 }
 
+export type EnrichmentJobStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelling"
+  | "cancelled";
+
+export type EnrichmentJobItemStatus =
+  | "queued"
+  | "running"
+  | "complete"
+  | "partial"
+  | "no_additional_data"
+  | "failed"
+  | "cancelled";
+
+export type EnrichmentJobStep =
+  | "queued"
+  | "loading_business_profile"
+  | "scanning_website"
+  | "rendering_website"
+  | "finding_public_contact_details"
+  | "researching_decision_maker"
+  | "building_outreach_profile"
+  | "complete"
+  | "partial"
+  | "no_additional_data"
+  | "failed"
+  | "cancelled";
+
+export interface EnrichmentJob {
+  id: string;
+  user_id: string;
+  source_search_job_id?: string | null;
+  requested_mode: "complete_outreach_profile";
+  status: EnrichmentJobStatus;
+  total_items: number;
+  queued_items: number;
+  running_items: number;
+  completed_items: number;
+  partial_items: number;
+  no_data_items: number;
+  failed_items: number;
+  cancelled_items: number;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  cancelled_at?: string | null;
+  updated_at: string;
+  safe_error_code?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface EnrichmentJobItem {
+  id: string;
+  job_id: string;
+  user_id: string;
+  lead_id: string;
+  status: EnrichmentJobItemStatus;
+  current_step: EnrichmentJobStep;
+  attempts: number;
+  queue_message_key: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  last_checked_at?: string | null;
+  safe_error_code?: string | null;
+  result_summary?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  lead?: Lead;
+}
+
 export interface DecisionMaker {
   id?: string;
   user_id?: string;

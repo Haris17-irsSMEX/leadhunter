@@ -14,6 +14,7 @@ import {
   setPublicDataCache,
 } from "@/lib/public-data-cache";
 import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
+import { extractStructuredPublicData } from "@/lib/structured-data";
 import type { DeliveryPlatformStatus } from "@/lib/types";
 
 export type PublicEmailResult = {
@@ -109,13 +110,16 @@ async function fetchPublicPage(url: string, context?: PublicWebResearchContext) 
   return page.html;
 }
 
-function extractEmails(html: string) {
+function extractEmails(html: string, sourceUrl: string) {
   const decoded = decodeHtml(html)
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
     .replace(/<img\b[^>]*>/gi, " ")
     .replace(/\s(?:src|srcset|data-src)=["'][^"']*["']/gi, " ");
   const candidates: Array<{ email: string; context: string }> = [];
+  for (const email of extractStructuredPublicData(html, sourceUrl).emails) {
+    candidates.push({ email, context: "structured public business data" });
+  }
 
   for (const match of decoded.matchAll(/mailto:([^"'?<>\s]+)/gi)) {
     const email = safeDecodeUriComponent(match[1]?.trim() ?? "");
@@ -214,7 +218,7 @@ export async function findPublicBusinessEmail(
     attempted = true;
     const html = await fetchPublicPage(homepageUrl, context);
     discoveredLinks = discoverUsefulLinks(baseUrl, html);
-    const [email] = extractEmails(html);
+    const [email] = extractEmails(html, homepageUrl);
 
     if (email) {
       const result: PublicEmailResult = {
@@ -239,7 +243,7 @@ export async function findPublicBusinessEmail(
       if (!contactPageUrl && isContactLikePath(new URL(targetUrl).pathname)) {
         contactPageUrl = targetUrl;
       }
-      const [email] = extractEmails(html);
+      const [email] = extractEmails(html, targetUrl);
 
       if (email) {
         const result: PublicEmailResult = {

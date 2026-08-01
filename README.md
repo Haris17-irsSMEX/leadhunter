@@ -12,6 +12,8 @@ LeadHunter is an early-access B2B prospecting workspace for agencies and outboun
 - ScrapeGraphAI for supported website and directory extraction
 - Hacker News Firebase and Algolia APIs
 - Upstash Redis when configured
+- Vercel Queues for durable per-lead enrichment jobs
+- Optional self-hosted Crawl4AI fallback for eligible JavaScript-rendered public business websites
 
 ## Local development
 
@@ -71,6 +73,7 @@ Apply all migrations in `supabase/migrations`:
 - `202607160002_add_indiehackers_source.sql`
 - `202607160003_add_producthunt_source.sql`
 - `202607170001_add_auth_profiles_and_rls.sql`
+- `202608010001_add_durable_enrichment_jobs.sql`
 
 The auth migration:
 
@@ -100,6 +103,10 @@ Copy `.env.local.example` and provide values only in `.env.local` or the deploym
 | `SGAI_API_KEY` | For extraction | ScrapeGraphAI key for website, directory, Indie Hackers, Product Hunt, and enrichment |
 | `UPSTASH_REDIS_REST_URL` | Optional | Upstash Redis REST endpoint |
 | `UPSTASH_REDIS_REST_TOKEN` | Optional | Upstash Redis REST token |
+| `CRAWL4AI_ENABLED` | Optional | Enables the separately hosted browser-rendered website fallback; defaults to false |
+| `CRAWL4AI_BASE_URL` | Optional | Server-only URL of the private Crawl4AI service |
+| `CRAWL4AI_API_TOKEN` | Optional | Server-only bearer token for the Crawl4AI service |
+| `CRAWL4AI_TIMEOUT_MS` | Optional | Browser fallback timeout, clamped to 45 seconds |
 | `COMMUNITIES_ENABLED` | Optional | Enables community scraping; defaults to false |
 | `HACKERNEWS_ENABLED` | Optional | Enables Hacker News; defaults to true |
 | `REDDIT_ENABLED` | Optional | Enables Reddit prototype; defaults to true |
@@ -206,3 +213,7 @@ After adding `leadhunter.irssmex.com` in Vercel:
 - Email enrichment only searches public website pages and may not find an email.
 - Paid subscription activation and Paddle checkout are not implemented.
 - LeadHunter does not automate outreach.
+
+## Third-party acknowledgements
+
+This product includes software developed by [UncleCode](https://x.com/unclecode) as part of the [Crawl4AI project](https://github.com/unclecode/crawl4ai). Crawl4AI is used only when the separately hosted optional fallback is enabled. See [the deployment guide](docs/crawl4ai-deployment.md) for the security boundary and license notes.

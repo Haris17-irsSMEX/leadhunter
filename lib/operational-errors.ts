@@ -6,6 +6,8 @@ export type OperationalErrorCode =
   | "website_blocked"
   | "website_unavailable"
   | "public_search_unavailable"
+  | "browser_fallback_unavailable"
+  | "browser_fallback_failed"
   | "invalid_city"
   | "scan_limit_reached"
   | "plan_limit_reached"
@@ -33,7 +35,13 @@ export function operationalError(
 ): OperationalError {
   const message = error instanceof Error ? error.message : "Unknown error";
   const normalized = message.toLowerCase();
-  const status = error && typeof error === "object" && "httpStatus" in error ? Number(error.httpStatus) : 0;
+  const status = error && typeof error === "object"
+    ? "httpStatus" in error
+      ? Number(error.httpStatus)
+      : "status" in error
+        ? Number(error.status)
+        : 0
+    : 0;
   const providerStatus =
     error && typeof error === "object" && "providerStatus" in error
       ? String(error.providerStatus ?? "").toUpperCase()
@@ -45,6 +53,9 @@ export function operationalError(
   else if (/stale|interrupted/.test(normalized)) code = "stale_job";
   else if (status === 429 || providerStatus === "RESOURCE_EXHAUSTED" || /quota|rate limit/.test(normalized)) code = "provider_quota";
   else if (providerStatus === "TIMEOUT" || /timeout|timed out/.test(normalized)) code = defaults.provider ? "provider_timeout" : "website_timeout";
+  else if (/browser fallback|crawl4ai|browser rendering/.test(normalized)) {
+    code = status >= 500 || /unavailable|timeout/.test(normalized) ? "browser_fallback_unavailable" : "browser_fallback_failed";
+  }
   else if (status >= 500 || providerStatus === "UNAVAILABLE") code = "provider_unavailable";
   else if (/403|blocked/.test(normalized)) code = defaults.provider ? "configuration_error" : "website_blocked";
   else if (/configuration|missing api key|not configured/.test(normalized)) code = "configuration_error";
@@ -52,10 +63,10 @@ export function operationalError(
   else if (/search/.test(normalized)) code = "public_search_unavailable";
   else if (/website|public page/.test(normalized)) code = "website_unavailable";
 
-  const retryable = ["provider_timeout", "provider_quota", "provider_unavailable", "website_timeout", "public_search_unavailable", "database_error"].includes(code);
+  const retryable = ["provider_timeout", "provider_quota", "provider_unavailable", "website_timeout", "public_search_unavailable", "browser_fallback_unavailable", "database_error"].includes(code);
   const category = code.startsWith("provider_") || code === "configuration_error"
     ? "provider"
-    : code.startsWith("website_") || code === "public_search_unavailable"
+    : code.startsWith("website_") || code === "public_search_unavailable" || code.startsWith("browser_fallback_")
       ? "website"
       : code === "database_error"
         ? "database"
@@ -71,6 +82,8 @@ export function operationalError(
       ? "A public data provider is temporarily unavailable. Please try again later."
       : code === "website_timeout"
         ? "The business website did not respond in time. Retry is available."
+        : code === "browser_fallback_unavailable"
+          ? "Browser-rendered research is temporarily unavailable. Direct website results were preserved."
         : code === "cancelled"
           ? "Processing stopped. Results already completed were preserved."
           : "This step could not be completed. Existing information was preserved.";

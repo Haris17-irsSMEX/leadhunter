@@ -78,7 +78,7 @@ function researchStatus(
 async function researchLeadDecisionMakersUnlocked(
   user: Pick<User, "id" | "email">,
   leadId: string,
-  options: { force?: boolean; context?: PublicWebResearchContext } = {},
+  options: { force?: boolean; context?: PublicWebResearchContext; bypassFreshness?: boolean } = {},
 ) {
   const lead = await loadLead(user, leadId);
   const existingCandidates = await loadCandidates(user, leadId);
@@ -86,7 +86,7 @@ async function researchLeadDecisionMakersUnlocked(
     isUsableDecisionMakerCandidate(candidate, lead.company_name),
   );
 
-  if (!options.force && isRecent(lead.decision_maker_last_checked_at)) {
+  if (!options.force && !options.bypassFreshness && isRecent(lead.decision_maker_last_checked_at)) {
     return {
       lead: { ...lead, decision_makers: usableExistingCandidates },
       candidates: usableExistingCandidates,
@@ -165,6 +165,9 @@ async function researchLeadDecisionMakersUnlocked(
     (left, right) => Number(right.is_primary) - Number(left.is_primary),
   );
   const status = researchStatus(candidates, result);
+  const currentMetadata = lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
+    ? lead.raw_metadata
+    : {};
   const { data: updatedLead, error: leadUpdateError } = await supabase
     .from("leads")
     .update({
@@ -175,6 +178,11 @@ async function researchLeadDecisionMakersUnlocked(
       public_whatsapp_number: result.whatsapp.number ?? null,
       public_whatsapp_source_url: result.whatsapp.sourceUrl ?? null,
       public_whatsapp_last_checked_at: now,
+      raw_metadata: {
+        ...currentMetadata,
+        ...(result.publicPhones.length ? { public_website_phones: result.publicPhones } : {}),
+        ...(result.socialLinks.length ? { public_social_links: result.socialLinks } : {}),
+      },
     })
     .eq("id", leadId)
     .in("user_id", getAllowedUserIds(user))
@@ -206,7 +214,7 @@ async function researchLeadDecisionMakersUnlocked(
 export async function researchLeadDecisionMakers(
   user: Pick<User, "id" | "email">,
   leadId: string,
-  options: { force?: boolean; context?: PublicWebResearchContext } = {},
+  options: { force?: boolean; context?: PublicWebResearchContext; bypassFreshness?: boolean } = {},
 ) {
   const lease = await acquireWorkloadLease(
     `decision-maker:active:${user.id}:${leadId}`,
