@@ -33,7 +33,17 @@ export function apiErrorResponse(error: unknown, fallback: string) {
     );
   }
 
-  console.error(`[api] ${fallback}`, error instanceof Error ? error.message : "Unknown error");
+  if (error instanceof Error && error.name === "LeadExportValidationError") {
+    return NextResponse.json(
+      { code: "EXPORT_VALIDATION_FAILED", error: error.message, message: error.message },
+      { status: 400 },
+    );
+  }
+
+  console.error(
+    `[api] ${fallback}`,
+    (error instanceof Error ? error.message : "Unknown error").slice(0, 500),
+  );
   return NextResponse.json({ error: fallback }, { status: 500 });
 }
 

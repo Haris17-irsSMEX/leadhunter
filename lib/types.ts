@@ -89,6 +89,42 @@ export type DecisionMakerResearchStatus =
   | "unavailable";
 export type WhatsAppStatus = "not_checked" | "confirmed_public" | "possible" | "not_found" | "error";
 
+export type CompleteEnrichmentStepStatus =
+  | "not_started"
+  | "queued"
+  | "running"
+  | "complete"
+  | "partial"
+  | "not_found"
+  | "skipped"
+  | "failed"
+  | "cancelled";
+
+export type CompleteEnrichmentOverallStatus =
+  | "not_started"
+  | "queued"
+  | "running"
+  | "complete"
+  | "partial"
+  | "not_found"
+  | "failed"
+  | "cancelled";
+
+export interface CompleteEnrichmentProgress {
+  status: CompleteEnrichmentOverallStatus;
+  contact_status: CompleteEnrichmentStepStatus;
+  whatsapp_status: CompleteEnrichmentStepStatus;
+  decision_maker_status: CompleteEnrichmentStepStatus;
+  outreach_status: CompleteEnrichmentStepStatus;
+  requested_mode: "complete";
+  started_at?: string;
+  completed_at?: string;
+  checked_at?: string;
+  last_error_code?: string;
+  cancel_requested?: boolean;
+  cached?: boolean;
+}
+
 export interface DecisionMaker {
   id?: string;
   user_id?: string;

@@ -8,13 +8,19 @@ import {
 import { isSafePublicEmail } from "@/lib/email-safety";
 import { isAgencyLead, isRestaurantLead } from "@/lib/lead-kind";
 import { classifyPublicEmail } from "@/lib/outreach-intelligence";
-import { fetchPublicWebPage, normalizePublicWebsiteUrl, sameRegistrableHost } from "@/lib/public-web";
+import {
+  fetchPublicWebPage,
+  normalizePublicWebsiteUrl,
+  sameRegistrableHost,
+  type PublicWebResearchContext,
+} from "@/lib/public-web";
 import type {
   DecisionMaker,
   DecisionMakerConfidence,
   Lead,
   WhatsAppStatus,
 } from "@/lib/types";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 type Candidate = Omit<DecisionMaker, "id" | "user_id" | "lead_id" | "created_at" | "updated_at">;
 type SearchItem = { title?: string; link?: string; snippet?: string };
@@ -31,9 +37,14 @@ export type DecisionMakerResearchResult = {
     number?: string;
     sourceUrl?: string;
   };
+  metrics: {
+    websiteRequests: number;
+    websitePagesFetched: number;
+    publicSearchRequests: number;
+    invalidCandidatesRejected: number;
+  };
 };
 
-const MAX_WEBSITE_PAGES = 8;
 const RESEARCH_PATHS = [
   "/about",
   "/about-us",
@@ -388,27 +399,33 @@ function dedupeAndRank(lead: Lead, candidates: Candidate[]) {
   return [...unique.values()].slice(0, 10).map((candidate, index) => ({ ...candidate, is_primary: index === 0 }));
 }
 
-export async function researchDecisionMakers(lead: Lead): Promise<DecisionMakerResearchResult> {
+export async function researchDecisionMakers(
+  lead: Lead,
+  context?: PublicWebResearchContext,
+): Promise<DecisionMakerResearchResult> {
   const baseUrl = normalizePublicWebsiteUrl(lead.website);
   const warnings: string[] = [];
   const researchedUrls: string[] = [];
   const candidates: Candidate[] = [];
   let websiteAvailable = false;
   let whatsapp: DecisionMakerResearchResult["whatsapp"] = { status: "not_checked" };
+  let websiteRequests = 0;
+  let publicSearchRequests = 0;
 
   if (baseUrl) {
     const fixedUrls = RESEARCH_PATHS.map((path) => new URL(path, baseUrl).toString());
     const targets = [baseUrl.toString(), ...fixedUrls];
 
-    for (let index = 0; index < targets.length && index < MAX_WEBSITE_PAGES; index += 1) {
+    for (let index = 0; index < targets.length && index < WORKLOAD_LIMITS.completeEnrichment.maxPagesPerLead; index += 1) {
       const target = targets[index];
       try {
+        websiteRequests += 1;
         const page = await fetchPublicWebPage(target, {
-          timeoutMs: 8_000,
-          maxBytes: 350_000,
-          maxRedirects: 3,
-          userAgent: "LeadHunter/1.0 DecisionMakerResearch",
-        });
+          timeoutMs: WORKLOAD_LIMITS.websiteResearch.requestTimeoutMs,
+          maxBytes: WORKLOAD_LIMITS.websiteResearch.maxResponseBytes,
+          maxRedirects: WORKLOAD_LIMITS.websiteResearch.maxRedirects,
+          userAgent: "LeadHunter/1.0 CompletePublicResearch",
+        }, context);
         websiteAvailable = true;
         researchedUrls.push(page.url);
         candidates.push(
@@ -432,6 +449,7 @@ export async function researchDecisionMakers(lead: Lead): Promise<DecisionMakerR
   if (serperKey) {
     try {
       searchAvailable = true;
+      publicSearchRequests += 1;
       const results = await serperSearch(`"${lead.company_name}" owner founder manager`, serperKey);
       candidates.push(...results.map((item) => searchCandidate(item, lead)).filter((item): item is Candidate => Boolean(item)));
     } catch {
@@ -443,12 +461,19 @@ export async function researchDecisionMakers(lead: Lead): Promise<DecisionMakerR
     whatsapp = { status: "not_found" };
   }
 
+  const rankedCandidates = dedupeAndRank(lead, candidates);
   return {
-    candidates: dedupeAndRank(lead, candidates),
+    candidates: rankedCandidates,
     researchedUrls,
     warnings,
     websiteAvailable,
     searchAvailable,
     whatsapp,
+    metrics: {
+      websiteRequests,
+      websitePagesFetched: researchedUrls.length,
+      publicSearchRequests,
+      invalidCandidatesRejected: Math.max(0, candidates.length - rankedCandidates.length),
+    },
   };
 }

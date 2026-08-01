@@ -2,6 +2,7 @@ import "server-only";
 
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export type PublicWebPage = {
   url: string;
@@ -15,6 +16,20 @@ export type PublicWebFetchOptions = {
   maxRedirects?: number;
   userAgent?: string;
 };
+
+export type PublicWebResearchContext = {
+  cache: Map<string, Promise<PublicWebPage>>;
+  maxPages: number;
+  requestsStarted: number;
+};
+
+export function createPublicWebResearchContext(maxPages = WORKLOAD_LIMITS.websiteResearch.maxPages): PublicWebResearchContext {
+  return {
+    cache: new Map(),
+    maxPages: Math.min(Math.max(Math.floor(maxPages), 1), WORKLOAD_LIMITS.websiteResearch.maxPages),
+    requestsStarted: 0,
+  };
+}
 
 const BLOCKED_HOSTNAMES = new Set([
   "localhost",
@@ -172,13 +187,22 @@ async function readBodyWithLimit(response: Response, maxBytes: number) {
   return new TextDecoder("utf-8", { fatal: false }).decode(combined);
 }
 
-export async function fetchPublicWebPage(
+async function fetchPublicWebPageUncached(
   input: string | URL,
   options: PublicWebFetchOptions = {},
 ): Promise<PublicWebPage> {
-  const timeoutMs = Math.min(Math.max(options.timeoutMs ?? 8_000, 1_000), 20_000);
-  const maxBytes = Math.min(Math.max(options.maxBytes ?? 300_000, 10_000), 1_000_000);
-  const maxRedirects = Math.min(Math.max(options.maxRedirects ?? 3, 0), 5);
+  const timeoutMs = Math.min(
+    Math.max(options.timeoutMs ?? WORKLOAD_LIMITS.websiteResearch.requestTimeoutMs, 1_000),
+    WORKLOAD_LIMITS.websiteResearch.requestTimeoutMs,
+  );
+  const maxBytes = Math.min(
+    Math.max(options.maxBytes ?? WORKLOAD_LIMITS.websiteResearch.maxResponseBytes, 10_000),
+    WORKLOAD_LIMITS.websiteResearch.maxResponseBytes,
+  );
+  const maxRedirects = Math.min(
+    Math.max(options.maxRedirects ?? WORKLOAD_LIMITS.websiteResearch.maxRedirects, 0),
+    WORKLOAD_LIMITS.websiteResearch.maxRedirects,
+  );
   const userAgent = options.userAgent ?? "LeadHunter/1.0 PublicBusinessResearch";
   let current = input instanceof URL ? new URL(input) : normalizePublicWebsiteUrl(input);
 
@@ -225,4 +249,33 @@ export async function fetchPublicWebPage(
   }
 
   throw new Error("Public page redirected too many times.");
+}
+
+export async function fetchPublicWebPage(
+  input: string | URL,
+  options: PublicWebFetchOptions = {},
+  context?: PublicWebResearchContext,
+): Promise<PublicWebPage> {
+  if (!context) {
+    return fetchPublicWebPageUncached(input, options);
+  }
+
+  const normalized = input instanceof URL ? new URL(input) : normalizePublicWebsiteUrl(input);
+  if (!normalized) {
+    return fetchPublicWebPageUncached(input, options);
+  }
+  const cacheKey = normalized.toString();
+
+  const cached = context.cache.get(cacheKey);
+  if (cached) return cached;
+  if (context.requestsStarted >= context.maxPages) {
+    throw new Error("The bounded public website page limit was reached.");
+  }
+  context.requestsStarted += 1;
+
+  const request = fetchPublicWebPageUncached(normalized, options).catch((error) => {
+    throw error;
+  });
+  context.cache.set(cacheKey, request);
+  return request;
 }

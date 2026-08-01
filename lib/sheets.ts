@@ -1,6 +1,11 @@
 import * as jose from "jose";
+import { createHash } from "node:crypto";
+import { PublicApiError } from "@/lib/api-errors";
 import { buildLeadExportTable, type LeadExportProfile } from "@/lib/lead-export";
+import { logWorkflowEvent } from "@/lib/operational-errors";
 import type { Lead } from "@/lib/types";
+import { acquireWorkloadLease } from "@/lib/workload-guards";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export class GoogleSheetsNotConfiguredError extends Error {
   constructor() {
@@ -533,46 +538,75 @@ async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName:
 }
 
 function formattingWarning(error: unknown) {
-  const detail = error instanceof Error ? error.message : "Unknown formatting error";
-  return `Google Sheets values synced, but formatting could not be applied: ${detail}`;
+  logWorkflowEvent("google-sheets", "formatting warning", {
+    error: error instanceof Error ? error.message : "Unknown formatting error",
+  });
+  return "Google Sheets values synced, but some visual formatting could not be applied.";
 }
 
 async function replaceLeadSheet(
-  token: string,
   spreadsheetId: string,
   sheetName: string,
   leads: Lead[],
   profile: LeadExportProfile,
 ) {
-  const warnings: string[] = [];
-  const table = buildLeadExportTable(leads, profile);
-  const { sheetId, columnCount: previousColumnCount, rowCount: gridRowCount } = await getOrCreateSheet(
-    token,
-    spreadsheetId,
-    sheetName,
-  );
-
-  await clearValues(token, spreadsheetId, sheetName, `A1:${columnName(previousColumnCount)}`);
-
-  try {
-    await resetLeadSheetFormatting(token, spreadsheetId, sheetId, previousColumnCount, gridRowCount);
-  } catch (error) {
-    warnings.push(formattingWarning(error));
+  const lockDigest = createHash("sha256")
+    .update(`${spreadsheetId}|${sheetName.trim().toLowerCase()}`)
+    .digest("hex");
+  const lease = await acquireWorkloadLease(`google-sheets:replace:${lockDigest}`, 120);
+  if (!lease) {
+    throw new PublicApiError(
+      "A sync is already running for this spreadsheet tab. Please wait for it to finish.",
+      409,
+      "SHEETS_SYNC_ALREADY_RUNNING",
+    );
   }
 
-  await resizeSheetColumns(token, spreadsheetId, sheetId, table.headers.length);
-
-  const values = [table.headers, ...table.rows];
-  const endColumn = columnName(table.headers.length);
-  await updateValues(token, spreadsheetId, sheetName, `A1:${endColumn}${values.length}`, values);
-
   try {
-    await formatLeadSheet(token, spreadsheetId, sheetId, table.headers, values.length);
-  } catch (error) {
-    warnings.push(formattingWarning(error));
-  }
+    const token = await getAccessToken();
+    const warnings: string[] = [];
+    const table = buildLeadExportTable(leads, profile);
+    const { sheetId, columnCount: previousColumnCount, rowCount: gridRowCount } = await getOrCreateSheet(
+      token,
+      spreadsheetId,
+      sheetName,
+    );
 
-  return warnings;
+    await clearValues(token, spreadsheetId, sheetName, `A1:${columnName(previousColumnCount)}`);
+
+    try {
+      await resetLeadSheetFormatting(token, spreadsheetId, sheetId, previousColumnCount, gridRowCount);
+    } catch (error) {
+      warnings.push(formattingWarning(error));
+    }
+
+    await resizeSheetColumns(token, spreadsheetId, sheetId, table.headers.length);
+
+    const endColumn = columnName(table.headers.length);
+    await updateValues(token, spreadsheetId, sheetName, `A1:${endColumn}1`, [table.headers]);
+    for (let offset = 0; offset < table.rows.length; offset += WORKLOAD_LIMITS.exports.googleSheetsBatchRows) {
+      const batch = table.rows.slice(offset, offset + WORKLOAD_LIMITS.exports.googleSheetsBatchRows);
+      const startRow = offset + 2;
+      const endRow = startRow + batch.length - 1;
+      await updateValues(token, spreadsheetId, sheetName, `A${startRow}:${endColumn}${endRow}`, batch);
+    }
+
+    try {
+      await formatLeadSheet(token, spreadsheetId, sheetId, table.headers, table.rows.length + 1);
+    } catch (error) {
+      warnings.push(formattingWarning(error));
+    }
+
+    logWorkflowEvent("google-sheets", "replace complete", {
+      rows: table.rows.length,
+      columns: table.headers.length,
+      profile,
+      batches: Math.ceil(table.rows.length / WORKLOAD_LIMITS.exports.googleSheetsBatchRows),
+    });
+    return warnings;
+  } finally {
+    await lease.release();
+  }
 }
 
 export async function exportLeadsToSheet(
@@ -581,8 +615,7 @@ export async function exportLeadsToSheet(
   sheetName = "Leads",
   profile: LeadExportProfile = "standard",
 ): Promise<SheetsExportResult> {
-  const token = await getAccessToken();
-  const warnings = await replaceLeadSheet(token, spreadsheetId, sheetName, leads, profile);
+  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads, profile);
 
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
@@ -597,8 +630,7 @@ export async function syncLeadsToSheet(
   sheetName = "Leads",
   profile: LeadExportProfile = "standard",
 ): Promise<SheetsExportResult> {
-  const token = await getAccessToken();
-  const warnings = await replaceLeadSheet(token, spreadsheetId, sheetName, leads, profile);
+  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads, profile);
 
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,

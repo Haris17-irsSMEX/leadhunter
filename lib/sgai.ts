@@ -1,4 +1,6 @@
 import type { Lead } from "@/lib/types";
+import { getPublicDataCache, PUBLIC_DATA_FRESHNESS, publicCacheKey, setPublicDataCache } from "@/lib/public-data-cache";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export const SGAI_BASE = "https://v2-api.scrapegraphai.com/api";
 const SGAI_KEY = process.env.SGAI_API_KEY!;
@@ -173,7 +175,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-type GooglePlacesStage = "configuration" | "text_search";
+type GooglePlacesStage = "configuration" | "text_search" | "autocomplete" | "place_details" | "nearby_search";
 
 export class GooglePlacesProviderError extends Error {
   constructor(
@@ -208,7 +210,7 @@ async function googlePlacesError(response: Response, stage: GooglePlacesStage) {
     stage,
     httpStatus: response.status,
     providerStatus: providerStatus ?? "UNKNOWN",
-    providerMessage: providerMessage ?? response.statusText ?? "Unknown provider error",
+    providerMessage: (providerMessage ?? response.statusText ?? "Unknown provider error").slice(0, 500),
   });
 
   return new GooglePlacesProviderError(stage, response.status, providerStatus, providerMessage);
@@ -248,9 +250,268 @@ async function fetchGooglePlaces(url: string, init: RequestInit, stage: GooglePl
   }
 }
 
-export async function scrapeGoogleMaps(query: string, location: string, numResults: number): Promise<Lead[]> {
+export type GoogleGeoPoint = {
+  latitude: number;
+  longitude: number;
+};
+
+export type GoogleGeoBounds = {
+  southwest: GoogleGeoPoint;
+  northeast: GoogleGeoPoint;
+};
+
+export type GoogleCitySuggestion = {
+  placeId: string;
+  label: string;
+};
+
+export type ResolvedGoogleCity = {
+  placeId: string;
+  name: string;
+  label: string;
+  country?: string;
+  center: GoogleGeoPoint;
+  bounds: GoogleGeoBounds;
+};
+
+export type PublicProviderResult<T> = {
+  value: T;
+  cached: boolean;
+  providerCalls: number;
+};
+
+export type GoogleNearbyPlace = {
+  id: string;
+  name: string;
+  formattedAddress?: string;
+  nationalPhoneNumber?: string;
+  websiteUri?: string;
+  types: string[];
+  primaryType?: string;
+  primaryTypeDisplayName?: string;
+  businessStatus?: string;
+  location: GoogleGeoPoint;
+  googleMapsUri?: string;
+  rating?: number;
+  userRatingCount?: number;
+  websiteFieldRequested: true;
+};
+
+export class GoogleCityAmbiguousError extends Error {
+  readonly code = "AMBIGUOUS_CITY";
+
+  constructor(readonly suggestions: GoogleCitySuggestion[]) {
+    super("Several cities match that name. Choose the correct city to continue.");
+    this.name = "GoogleCityAmbiguousError";
+  }
+}
+
+function googlePlacesApiKey() {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY?.trim();
-  const safeNumResults = Math.min(Math.max(Math.floor(numResults), 1), 50);
+  if (!apiKey) {
+    throw new GooglePlacesProviderError("configuration", 0, "MISSING_API_KEY", "GOOGLE_PLACES_API_KEY is not configured.");
+  }
+  return apiKey;
+}
+
+function validPoint(value: unknown): value is GoogleGeoPoint {
+  if (!isRecord(value)) return false;
+  return typeof value.latitude === "number" && typeof value.longitude === "number";
+}
+
+export async function resolveGoogleCityWithMeta(
+  cityInput: string,
+  selectedPlaceId?: string,
+): Promise<PublicProviderResult<ResolvedGoogleCity>> {
+  const apiKey = googlePlacesApiKey();
+  const input = cityInput.trim();
+  const cacheKey = publicCacheKey("google-city", `${input}|${selectedPlaceId ?? "auto"}`, "v1");
+  const cached = await getPublicDataCache<ResolvedGoogleCity>(cacheKey);
+  if (cached) return { value: cached, cached: true, providerCalls: 0 };
+  const response = await fetchGooglePlaces(
+    "https://places.googleapis.com/v1/places:autocomplete",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.types",
+      },
+      body: JSON.stringify({ input, includedPrimaryTypes: ["(cities)"] }),
+    },
+    "autocomplete",
+  );
+  const payload = (await response.json()) as {
+    suggestions?: Array<{
+      placePrediction?: { placeId?: string; text?: { text?: string }; types?: string[] };
+    }>;
+  };
+  const suggestions = (payload.suggestions ?? [])
+    .map((item) => item.placePrediction)
+    .filter((item): item is NonNullable<typeof item> & { placeId: string } => Boolean(item?.placeId))
+    .map((item) => ({ placeId: item.placeId, label: item.text?.text?.trim() || input }))
+    .slice(0, 5);
+
+  if (!suggestions.length) {
+    throw new GooglePlacesProviderError("autocomplete", 404, "CITY_NOT_FOUND", "The city could not be resolved.");
+  }
+
+  let selected = selectedPlaceId ? suggestions.find((item) => item.placeId === selectedPlaceId) : undefined;
+  if (selectedPlaceId && !selected) {
+    throw new GooglePlacesProviderError("autocomplete", 400, "INVALID_CITY_SELECTION", "The selected city is no longer valid.");
+  }
+
+  if (!selected) {
+    if (suggestions.length > 1 && !input.includes(",")) {
+      throw new GoogleCityAmbiguousError(suggestions);
+    }
+    selected = suggestions[0];
+  }
+
+  const detailsResponse = await fetchGooglePlaces(
+    `https://places.googleapis.com/v1/places/${encodeURIComponent(selected.placeId)}`,
+    {
+      headers: {
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "id,displayName,formattedAddress,location,viewport,types,addressComponents",
+      },
+    },
+    "place_details",
+  );
+  const details = (await detailsResponse.json()) as {
+    id?: string;
+    displayName?: { text?: string };
+    formattedAddress?: string;
+    location?: unknown;
+    viewport?: { low?: unknown; high?: unknown };
+    types?: string[];
+    addressComponents?: Array<{ longText?: string; types?: string[] }>;
+  };
+
+  if (!validPoint(details.location) || !validPoint(details.viewport?.low) || !validPoint(details.viewport?.high)) {
+    throw new GooglePlacesProviderError("place_details", 422, "UNSUPPORTED_AREA", "The city boundary is unavailable.");
+  }
+
+  const cityTypes = new Set(["locality", "postal_town", "administrative_area_level_3"]);
+  if (!(details.types ?? []).some((type) => cityTypes.has(type))) {
+    throw new GooglePlacesProviderError("place_details", 422, "UNSUPPORTED_AREA", "The selected place is not a supported city.");
+  }
+
+  const city: ResolvedGoogleCity = {
+    placeId: details.id ?? selected.placeId,
+    name: details.displayName?.text?.trim() || input,
+    label: details.formattedAddress?.trim() || selected.label,
+    country: details.addressComponents?.find((part) => part.types?.includes("country"))?.longText,
+    center: details.location,
+    bounds: { southwest: details.viewport.low, northeast: details.viewport.high },
+  };
+  await setPublicDataCache(cacheKey, city, PUBLIC_DATA_FRESHNESS.cityResolutionMs);
+  return { value: city, cached: false, providerCalls: 2 };
+}
+
+export async function resolveGoogleCity(cityInput: string, selectedPlaceId?: string): Promise<ResolvedGoogleCity> {
+  return (await resolveGoogleCityWithMeta(cityInput, selectedPlaceId)).value;
+}
+
+const CITY_NEARBY_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.nationalPhoneNumber",
+  "places.websiteUri",
+  "places.types",
+  "places.primaryType",
+  "places.primaryTypeDisplayName",
+  "places.businessStatus",
+  "places.location",
+  "places.googleMapsUri",
+  "places.rating",
+  "places.userRatingCount",
+].join(",");
+
+export async function searchGooglePlacesNearbyWithMeta(
+  includedTypes: string[],
+  center: GoogleGeoPoint,
+  radiusMeters: number,
+): Promise<PublicProviderResult<GoogleNearbyPlace[]>> {
+  const apiKey = googlePlacesApiKey();
+  const normalizedTypes = [...new Set(includedTypes)].sort().slice(0, 50);
+  const normalizedRadius = Math.min(Math.max(radiusMeters, 1), 50_000);
+  const cacheKey = publicCacheKey(
+    "google-nearby",
+    `${normalizedTypes.join(",")}|${center.latitude.toFixed(5)},${center.longitude.toFixed(5)}|${Math.round(normalizedRadius)}`,
+    "v1",
+  );
+  const cached = await getPublicDataCache<GoogleNearbyPlace[]>(cacheKey);
+  if (cached) return { value: cached, cached: true, providerCalls: 0 };
+  const response = await fetchGooglePlaces(
+    "https://places.googleapis.com/v1/places:searchNearby",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": CITY_NEARBY_FIELD_MASK,
+      },
+      body: JSON.stringify({
+        includedTypes: normalizedTypes,
+        maxResultCount: 20,
+        rankPreference: "POPULARITY",
+        locationRestriction: { circle: { center, radius: normalizedRadius } },
+      }),
+    },
+    "nearby_search",
+  );
+  const payload = (await response.json()) as { places?: Array<Record<string, unknown>> };
+
+  if (payload.places !== undefined && !Array.isArray(payload.places)) {
+    throw new GooglePlacesProviderError("nearby_search", response.status, "INVALID_RESPONSE", "Google Places returned an unexpected result structure.");
+  }
+
+  const places = (payload.places ?? []).flatMap((place) => {
+    const id = stringValue(place.id);
+    const displayName = isRecord(place.displayName) ? stringValue(place.displayName.text) : undefined;
+    if (!id || !displayName || !validPoint(place.location)) return [];
+
+    return [{
+      id,
+      name: displayName,
+      formattedAddress: stringValue(place.formattedAddress),
+      nationalPhoneNumber: stringValue(place.nationalPhoneNumber),
+      websiteUri: stringValue(place.websiteUri),
+      types: Array.isArray(place.types) ? place.types.filter((type): type is string => typeof type === "string") : [],
+      primaryType: stringValue(place.primaryType),
+      primaryTypeDisplayName: isRecord(place.primaryTypeDisplayName) ? stringValue(place.primaryTypeDisplayName.text) : undefined,
+      businessStatus: stringValue(place.businessStatus),
+      location: place.location,
+      googleMapsUri: stringValue(place.googleMapsUri),
+      rating: typeof place.rating === "number" ? place.rating : undefined,
+      userRatingCount: typeof place.userRatingCount === "number" ? place.userRatingCount : undefined,
+      websiteFieldRequested: true as const,
+    }];
+  });
+  await setPublicDataCache(cacheKey, places, PUBLIC_DATA_FRESHNESS.googlePlacesMs);
+  return { value: places, cached: false, providerCalls: 1 };
+}
+
+export async function searchGooglePlacesNearby(
+  includedTypes: string[],
+  center: GoogleGeoPoint,
+  radiusMeters: number,
+): Promise<GoogleNearbyPlace[]> {
+  return (await searchGooglePlacesNearbyWithMeta(includedTypes, center, radiusMeters)).value;
+}
+
+export async function scrapeGoogleMapsWithMeta(
+  query: string,
+  location: string,
+  numResults: number,
+): Promise<PublicProviderResult<Lead[]>> {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY?.trim();
+  const safeNumResults = Math.min(
+    Math.max(Math.floor(numResults), 1),
+    WORKLOAD_LIMITS.nicheSearch.maxRequestedLeads,
+  );
   const searchQuery = `${query} in ${location}`;
 
   console.info("[google-places] search started", {
@@ -268,6 +529,13 @@ export async function scrapeGoogleMaps(query: string, location: string, numResul
     );
   }
 
+  const cacheKey = publicCacheKey("google-text-search", `${query.trim()}|${location.trim()}|${safeNumResults}`, "v2");
+  const cached = await getPublicDataCache<Lead[]>(cacheKey);
+  if (cached) {
+    const now = new Date().toISOString();
+    return { value: cached.map((lead) => ({ ...lead, scraped_at: now })), cached: true, providerCalls: 0 };
+  }
+
   const sourceUrl = `maps:${query} ${location}`;
   const places: Array<{
     id?: string;
@@ -280,12 +548,17 @@ export async function scrapeGoogleMaps(query: string, location: string, numResul
   }> = [];
   let pageToken: string | undefined;
   const pageSize = Math.min(GOOGLE_PLACES_PAGE_SIZE, safeNumResults);
+  let providerCalls = 0;
 
-  while (places.length < safeNumResults) {
+  while (
+    places.length < safeNumResults &&
+    providerCalls < WORKLOAD_LIMITS.nicheSearch.maxPlacesPages
+  ) {
     if (pageToken) {
       await sleep(GOOGLE_PLACES_PAGE_DELAY_MS);
     }
 
+    providerCalls += 1;
     const textSearchResponse = await fetchGooglePlaces("https://places.googleapis.com/v1/places:searchText", {
       method: "POST",
       headers: {
@@ -399,7 +672,7 @@ export async function scrapeGoogleMaps(query: string, location: string, numResul
     }
   }
 
-  return places.slice(0, safeNumResults).map(
+  const leads = places.slice(0, safeNumResults).map(
     (place) =>
       ({
       company_name: place.displayName?.text ?? "Unknown",
@@ -418,6 +691,16 @@ export async function scrapeGoogleMaps(query: string, location: string, numResul
       scraped_at: new Date().toISOString(),
       }) satisfies Lead,
   );
+  await setPublicDataCache(
+    cacheKey,
+    leads.map(({ scraped_at: _scrapedAt, ...lead }) => lead as Lead),
+    PUBLIC_DATA_FRESHNESS.googlePlacesMs,
+  );
+  return { value: leads, cached: false, providerCalls };
+}
+
+export async function scrapeGoogleMaps(query: string, location: string, numResults: number): Promise<Lead[]> {
+  return (await scrapeGoogleMapsWithMeta(query, location, numResults)).value;
 }
 
 export async function scrapeDirectory(url: string): Promise<Lead[]> {

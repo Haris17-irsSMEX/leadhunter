@@ -9,6 +9,8 @@ import {
   getPrimaryDecisionMaker,
 } from "@/lib/outreach-intelligence";
 import type { Lead } from "@/lib/types";
+import { safeSpreadsheetCell } from "@/lib/spreadsheet-safety";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export type LeadExportProfile = "standard" | "outreach_ready" | "restaurant_focused";
 export type LeadExportColumn = {
@@ -17,6 +19,13 @@ export type LeadExportColumn = {
   hyperlink?: boolean;
   value: (lead: Lead) => string;
 };
+
+export class LeadExportValidationError extends Error {
+  constructor(message = "The selected leads could not be exported safely.") {
+    super(message);
+    this.name = "LeadExportValidationError";
+  }
+}
 
 export function normalizeLeadExportProfile(value: unknown): LeadExportProfile {
   if (value === "outreach_ready" || value === "restaurant_focused") return value;
@@ -101,32 +110,32 @@ function restaurantEnrichmentLabel(value: Lead["restaurant_enrichment_status"]) 
 
 const restaurantColumns: LeadExportColumn[] = [
   { label: "Uber Eats", width: 18, value: (lead) => deliveryStatusLabelForLead(lead, "ubereats") },
-  { label: "Uber Eats Menu URL", width: 36, hyperlink: true, value: (lead) => cleanExportText(lead.delivery_ubereats_menu_url) },
+  { label: "Uber Eats Menu URL", width: 36, hyperlink: true, value: (lead) => cleanPublicUrl(lead.delivery_ubereats_menu_url) },
   { label: "Uber Eats Confidence", width: 22, value: (lead) => cleanNumber(lead.delivery_ubereats_confidence) },
   { label: "DoorDash", width: 18, value: (lead) => deliveryStatusLabelForLead(lead, "doordash") },
-  { label: "DoorDash Menu URL", width: 36, hyperlink: true, value: (lead) => cleanExportText(lead.delivery_doordash_menu_url) },
+  { label: "DoorDash Menu URL", width: 36, hyperlink: true, value: (lead) => cleanPublicUrl(lead.delivery_doordash_menu_url) },
   { label: "DoorDash Confidence", width: 22, value: (lead) => cleanNumber(lead.delivery_doordash_confidence) },
   { label: "Grubhub", width: 18, value: (lead) => deliveryStatusLabelForLead(lead, "grubhub") },
-  { label: "Grubhub Menu URL", width: 36, hyperlink: true, value: (lead) => cleanExportText(lead.delivery_grubhub_menu_url) },
+  { label: "Grubhub Menu URL", width: 36, hyperlink: true, value: (lead) => cleanPublicUrl(lead.delivery_grubhub_menu_url) },
   { label: "Grubhub Confidence", width: 22, value: (lead) => cleanNumber(lead.delivery_grubhub_confidence) },
   { label: "Deliveroo", width: 18, value: (lead) => deliveryStatusLabelForLead(lead, "deliveroo") },
-  { label: "Deliveroo Menu URL", width: 36, hyperlink: true, value: (lead) => cleanExportText(lead.delivery_deliveroo_menu_url) },
+  { label: "Deliveroo Menu URL", width: 36, hyperlink: true, value: (lead) => cleanPublicUrl(lead.delivery_deliveroo_menu_url) },
   { label: "Deliveroo Confidence", width: 22, value: (lead) => cleanNumber(lead.delivery_deliveroo_confidence) },
   { label: "Just Eat", width: 18, value: (lead) => deliveryStatusLabelForLead(lead, "justeat") },
-  { label: "Just Eat Menu URL", width: 36, hyperlink: true, value: (lead) => cleanExportText(lead.delivery_justeat_menu_url) },
+  { label: "Just Eat Menu URL", width: 36, hyperlink: true, value: (lead) => cleanPublicUrl(lead.delivery_justeat_menu_url) },
   { label: "Just Eat Confidence", width: 22, value: (lead) => cleanNumber(lead.delivery_justeat_confidence) },
   { label: "Restaurant Enrichment", width: 24, value: (lead) => restaurantEnrichmentLabel(lead.restaurant_enrichment_status) },
 ];
 
 const standardColumns: LeadExportColumn[] = [
   { label: "Company Name", width: 28, value: (lead) => cleanExportText(lead.company_name) },
-  { label: "Website", width: 32, hyperlink: true, value: (lead) => cleanExportText(lead.website) },
+  { label: "Website", width: 32, hyperlink: true, value: (lead) => cleanPublicUrl(lead.website) },
   { label: "Best Contact Method", width: 22, value: (lead) => getOutreachIntelligence(lead).bestContactMethod },
   { label: "Contactability", width: 18, value: (lead) => getContactabilityStatus(lead) },
   { label: "Public Email", width: 28, value: (lead) => cleanSafePublicEmail(lead.email) },
-  { label: "Email Source", width: 32, hyperlink: true, value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanExportText(lead.email_source_url) : "") },
+  { label: "Email Source", width: 32, hyperlink: true, value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanPublicUrl(lead.email_source_url) : "") },
   { label: "Email Confidence", width: 18, value: (lead) => (cleanSafePublicEmail(lead.email) ? cleanNumber(lead.email_confidence) : "") },
-  { label: "Contact Page URL", width: 34, hyperlink: true, value: (lead) => cleanExportText(getContactPageUrl(lead)) },
+  { label: "Contact Page URL", width: 34, hyperlink: true, value: (lead) => cleanPublicUrl(getContactPageUrl(lead)) },
   { label: "Phone", width: 18, value: (lead) => cleanExportText(lead.phone) },
   { label: "Location", width: 32, value: (lead) => cleanExportText(lead.location) },
   { label: "Category", width: 28, value: (lead) => getCategorySummary(lead.industry) },
@@ -136,12 +145,12 @@ const standardColumns: LeadExportColumn[] = [
 
 const outreachColumns: LeadExportColumn[] = [
   { label: "Company Name", width: 28, value: (lead) => cleanExportText(lead.company_name) },
-  { label: "Website", width: 32, hyperlink: true, value: (lead) => cleanExportText(lead.website) },
+  { label: "Website", width: 32, hyperlink: true, value: (lead) => cleanPublicUrl(lead.website) },
   { label: "Phone", width: 18, value: (lead) => cleanExportText(lead.phone) },
   { label: "Location", width: 34, value: (lead) => cleanExportText(lead.location) },
   { label: "Public Email", width: 28, value: (lead) => cleanSafePublicEmail(lead.email) },
   { label: "Email Type", width: 22, value: (lead) => cleanEnumLabel(classifyPublicEmail(lead.email)) },
-  { label: "Contact Page URL", width: 34, hyperlink: true, value: (lead) => cleanExportText(getContactPageUrl(lead)) },
+  { label: "Contact Page URL", width: 34, hyperlink: true, value: (lead) => cleanPublicUrl(getContactPageUrl(lead)) },
   { label: "Best Contact Method", width: 22, value: (lead) => getOutreachIntelligence(lead).bestContactMethod },
   { label: "Decision-Maker Name", width: 24, value: (lead) => cleanExportText(getPrimaryDecisionMaker(lead)?.name) },
   { label: "Decision-Maker Role", width: 24, value: (lead) => cleanExportText(getPrimaryDecisionMaker(lead)?.role) },
@@ -181,10 +190,27 @@ export function getLeadExportColumns(leads: Lead[], profile: LeadExportProfile):
 }
 
 export function buildLeadExportTable(leads: Lead[], profile: LeadExportProfile) {
+  if (leads.length > WORKLOAD_LIMITS.exports.maxRows) {
+    throw new LeadExportValidationError(
+      `Exports are limited to ${WORKLOAD_LIMITS.exports.maxRows.toLocaleString()} leads per request.`,
+    );
+  }
   const columns = getLeadExportColumns(leads, profile);
+  const headers = columns.map((column) => column.label);
+  if (!columns.length || new Set(headers).size !== headers.length) {
+    throw new LeadExportValidationError();
+  }
+  const rows = leads.map((lead) =>
+    columns.map((column) =>
+      safeSpreadsheetCell(column.value(lead), WORKLOAD_LIMITS.exports.maxCellLength),
+    ),
+  );
+  if (rows.some((row) => row.length !== headers.length || row.some((value) => typeof value !== "string"))) {
+    throw new LeadExportValidationError();
+  }
   return {
     columns,
-    headers: columns.map((column) => column.label),
-    rows: leads.map((lead) => columns.map((column) => column.value(lead))),
+    headers,
+    rows,
   };
 }

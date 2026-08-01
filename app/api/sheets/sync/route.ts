@@ -7,6 +7,7 @@ import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import type { Lead } from "@/lib/types";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export const runtime = "nodejs";
 
@@ -50,7 +51,8 @@ export async function POST(request: NextRequest) {
       .from("leads")
       .select("*")
       .in("user_id", getAllowedUserIds(user))
-      .order("scraped_at", { ascending: false });
+      .order("scraped_at", { ascending: false })
+      .limit(WORKLOAD_LIMITS.exports.maxRows + 1);
 
     if (error) {
       throw new Error(error.message);

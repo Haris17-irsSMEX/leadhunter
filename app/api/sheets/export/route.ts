@@ -7,6 +7,7 @@ import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { exportLeadsToSheet, GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import type { Lead } from "@/lib/types";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export const runtime = "nodejs";
 
@@ -40,6 +41,11 @@ export async function POST(request: NextRequest) {
     const mode = body.mode ?? (Array.isArray(body.leadIds) && body.leadIds.length > 0 ? "selected" : "recent");
     const syncFilter = normalizeLeadExportFilter(body.syncFilter);
     const exportProfile = normalizeLeadExportProfile(body.exportProfile);
+    const selectedLeadIds = [...new Set(
+      (body.leadIds ?? [])
+        .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+        .map((id) => id.trim()),
+    )];
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -58,15 +64,22 @@ export async function POST(request: NextRequest) {
       .order("scraped_at", { ascending: false });
 
     if (mode === "selected") {
-      if (!Array.isArray(body.leadIds) || body.leadIds.length === 0) {
+      if (!selectedLeadIds.length) {
         return NextResponse.json({ error: "leadIds are required for selected exports." }, { status: 400 });
       }
-
-      query = query.in("id", body.leadIds.slice(0, 500));
+      if (selectedLeadIds.length > WORKLOAD_LIMITS.exports.maxSelectedIds) {
+        return NextResponse.json(
+          { error: `Select no more than ${WORKLOAD_LIMITS.exports.maxSelectedIds} leads per sync.` },
+          { status: 400 },
+        );
+      }
+      query = query.in("id", selectedLeadIds);
     } else if (mode === "recent") {
       const count = Math.min(Math.max(Number(body.count) || 20, 1), 500);
       query = query.limit(count);
-    } else if (mode !== "all") {
+    } else if (mode === "all") {
+      query = query.limit(WORKLOAD_LIMITS.exports.maxRows + 1);
+    } else {
       return NextResponse.json({ error: "Invalid export mode." }, { status: 400 });
     }
 
@@ -74,6 +87,9 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       throw new Error(error.message);
+    }
+    if (mode === "selected" && (data?.length ?? 0) !== selectedLeadIds.length) {
+      return NextResponse.json({ error: "One or more selected leads could not be synced." }, { status: 404 });
     }
 
     const filtered = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);

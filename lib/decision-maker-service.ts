@@ -6,6 +6,9 @@ import { decisionMakerMigrationMissing } from "@/lib/decision-maker-db";
 import { isUsableDecisionMakerCandidate } from "@/lib/decision-maker-validation";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { researchDecisionMakers } from "@/lib/decision-maker-research";
+import type { PublicWebResearchContext } from "@/lib/public-web";
+import { acquireWorkloadLease, startCooldown } from "@/lib/workload-guards";
+import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 import type { User } from "@supabase/supabase-js";
 import type { DecisionMaker, Lead } from "@/lib/types";
 
@@ -72,10 +75,10 @@ function researchStatus(
   return "not_found" as const;
 }
 
-export async function researchLeadDecisionMakers(
+async function researchLeadDecisionMakersUnlocked(
   user: Pick<User, "id" | "email">,
   leadId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; context?: PublicWebResearchContext } = {},
 ) {
   const lead = await loadLead(user, leadId);
   const existingCandidates = await loadCandidates(user, leadId);
@@ -88,6 +91,13 @@ export async function researchLeadDecisionMakers(
       lead: { ...lead, decision_makers: usableExistingCandidates },
       candidates: usableExistingCandidates,
       cached: true,
+      metrics: {
+        websiteRequests: 0,
+        websitePagesFetched: 0,
+        publicSearchRequests: 0,
+        invalidCandidatesRejected: Math.max(0, existingCandidates.length - usableExistingCandidates.length),
+        cacheHits: 1,
+      },
       warnings: [],
       message: usableExistingCandidates.length
         ? "Recent decision-maker research is already available."
@@ -95,7 +105,7 @@ export async function researchLeadDecisionMakers(
     };
   }
 
-  const result = await researchDecisionMakers(lead);
+  const result = await researchDecisionMakers(lead, options.context);
   const now = new Date().toISOString();
   const supabase = getSupabaseServiceClient();
   const preserved = existingCandidates.filter(
@@ -187,7 +197,41 @@ export async function researchLeadDecisionMakers(
     lead: { ...(updatedLead as Lead), decision_makers: candidates },
     candidates,
     cached: false,
+    metrics: { ...result.metrics, cacheHits: 0 },
     warnings: result.warnings,
     message,
   };
+}
+
+export async function researchLeadDecisionMakers(
+  user: Pick<User, "id" | "email">,
+  leadId: string,
+  options: { force?: boolean; context?: PublicWebResearchContext } = {},
+) {
+  const lease = await acquireWorkloadLease(
+    `decision-maker:active:${user.id}:${leadId}`,
+    WORKLOAD_LIMITS.completeEnrichment.activeLockSeconds,
+  );
+  if (!lease) {
+    throw new PublicApiError("This lead is already being researched.", 409, "DUPLICATE_ACTIVE_RUN");
+  }
+
+  try {
+    if (
+      options.force &&
+      !(await startCooldown(
+        `decision-maker:force:${user.id}:${leadId}`,
+        WORKLOAD_LIMITS.completeEnrichment.forceRefreshCooldownSeconds,
+      ))
+    ) {
+      throw new PublicApiError(
+        "Please wait before refreshing this lead again.",
+        429,
+        "ENRICHMENT_REFRESH_COOLDOWN",
+      );
+    }
+    return await researchLeadDecisionMakersUnlocked(user, leadId, options);
+  } finally {
+    await lease.release();
+  }
 }
