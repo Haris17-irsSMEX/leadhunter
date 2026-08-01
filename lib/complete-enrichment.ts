@@ -11,8 +11,9 @@ import { getSupabaseServiceClient } from "@/lib/db";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { classifyPublicEmail, getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
 import { createPublicWebResearchContext, normalizePublicWebsiteUrl, seedPublicWebResearchPage } from "@/lib/public-web";
+import { enrichLeadPublicEmail, hasCurrentPublicEmailResearch } from "@/lib/public-email-service";
 import { redis } from "@/lib/redis";
-import { findPublicBusinessEmail, type PublicEmailResult } from "@/lib/restaurant-email";
+import type { PublicEmailResult } from "@/lib/restaurant-email";
 import { logWorkflowEvent, operationalError } from "@/lib/operational-errors";
 import { startCooldown } from "@/lib/workload-guards";
 import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
@@ -300,7 +301,8 @@ export async function completeLeadEnrichment(
   if (
     !options.force &&
     ["complete", "partial", "not_found"].includes(existingProgress.status) &&
-    isRecent(existingProgress.checked_at ?? existingProgress.completed_at)
+    isRecent(existingProgress.checked_at ?? existingProgress.completed_at) &&
+    (!lead.website?.trim() || Boolean(cleanSafePublicEmail(lead.email)) || hasCurrentPublicEmailResearch(lead))
   ) {
     const [attached] = await attachDecisionMakers([lead]);
     const cachedProgress = { ...existingProgress, cached: true } satisfies CompleteEnrichmentProgress;
@@ -375,15 +377,29 @@ export async function completeLeadEnrichment(
 
     const context = createPublicWebResearchContext(options.maxPages);
     await options.onStep?.("finding_public_contact_details");
-    const contactPromise: Promise<PublicEmailResult> = lead.website?.trim()
-      ? findPublicBusinessEmail(lead.website, context, { forceRefresh: options.force === true })
-      : Promise.resolve({ status: "not_checked" as const });
+    let contactResult: PromiseSettledResult<PublicEmailResult>;
+    if (lead.website?.trim()) {
+      try {
+        const contact = await enrichLeadPublicEmail(user, lead, {
+          context,
+          forceRefresh: options.force === true,
+        });
+        lead = contact.lead;
+        contactResult = { status: "fulfilled", value: contact.result };
+      } catch (reason) {
+        contactResult = { status: "rejected", reason };
+      }
+    } else {
+      contactResult = { status: "fulfilled", value: { status: "not_checked" } };
+    }
+
     await options.onStep?.("researching_decision_maker");
-    const decisionMakerPromise = researchLeadDecisionMakers(user, leadId, {
-      force: options.force,
-      context,
-    });
-    let [contactResult, decisionMakerResult] = await Promise.allSettled([contactPromise, decisionMakerPromise]);
+    let decisionMakerResult = await Promise.resolve(
+      researchLeadDecisionMakers(user, leadId, { force: options.force, context }),
+    ).then(
+      (value) => ({ status: "fulfilled", value }) as const,
+      (reason) => ({ status: "rejected", reason }) as const,
+    );
     let browserFallbackStatus: "not_used" | "completed" | "unavailable" | "not_eligible" | "robots_disallowed" | "error" = "not_used";
     let browserFallbackPages = 0;
     const directContact = contactResult.status === "fulfilled" ? contactResult.value : null;
@@ -405,17 +421,20 @@ export async function completeLeadEnrichment(
       if (fallback.status === "completed" && fallback.pages.length) {
         fallback.pages.forEach((page) => seedPublicWebResearchPage(context, page, { replace: true }));
         await options.onStep?.("finding_public_contact_details");
-        const fallbackContactPromise = findPublicBusinessEmail(lead.website, context, { forceRefresh: true });
+        try {
+          const fallbackContact = await enrichLeadPublicEmail(user, lead, { context, forceRefresh: true });
+          lead = fallbackContact.lead;
+          contactResult = { status: "fulfilled", value: fallbackContact.result };
+        } catch (reason) {
+          contactResult = { status: "rejected", reason };
+        }
         await options.onStep?.("researching_decision_maker");
-        const fallbackDecisionPromise = researchLeadDecisionMakers(user, leadId, {
-          context,
-          bypassFreshness: true,
-        });
-        const [fallbackContact, fallbackDecision] = await Promise.allSettled([
-          fallbackContactPromise,
-          fallbackDecisionPromise,
-        ]);
-        if (fallbackContact.status === "fulfilled") contactResult = fallbackContact;
+        const fallbackDecision = await Promise.resolve(
+          researchLeadDecisionMakers(user, leadId, { context, bypassFreshness: true }),
+        ).then(
+          (value) => ({ status: "fulfilled", value }) as const,
+          (reason) => ({ status: "rejected", reason }) as const,
+        );
         if (fallbackDecision.status === "fulfilled") decisionMakerResult = fallbackDecision;
       } else if (fallback.safeErrorCode) {
         warnings.push("Browser rendering was unavailable. Direct website results were preserved.");
@@ -426,35 +445,13 @@ export async function completeLeadEnrichment(
     let contactStatus: CompleteEnrichmentStepStatus = lead.website?.trim() ? "not_found" : "skipped";
     const currentEmail = cleanSafePublicEmail(lead.email);
     const existingContactPage = getContactPageUrl(lead);
-    let email = currentEmail;
-    let contactPageUrl = existingContactPage ?? undefined;
-    let contactAdditions: Record<string, unknown> = {};
 
     if (contactResult.status === "fulfilled") {
       const result = contactResult.value;
-      const discoveredEmail = cleanSafePublicEmail(result.email);
-      email = currentEmail ?? discoveredEmail;
-      contactPageUrl = result.contactPageUrl ?? existingContactPage ?? undefined;
+      const email = currentEmail ?? cleanSafePublicEmail(result.email);
+      const contactPageUrl = result.contactPageUrl ?? existingContactPage ?? undefined;
       contactStatus = email || contactPageUrl ? "complete" : result.status === "error" ? "failed" : lead.website?.trim() ? "not_found" : "skipped";
       if (result.status === "error") errorCodes.push("website_unavailable");
-      contactAdditions = {
-        ...(email && !currentEmail
-          ? { email, email_source_url: result.sourceUrl ?? null, email_confidence: result.confidence ?? null }
-          : {}),
-      };
-      const latestBeforeContactUpdate = await loadLead(user, leadId);
-      const metadata = safeMetadata(latestBeforeContactUpdate);
-      contactAdditions.raw_metadata = {
-        ...metadata,
-        contact_enrichment: {
-          ...(isRecord(metadata.contact_enrichment) ? metadata.contact_enrichment : {}),
-          status: contactStatus,
-          contact_page_url: contactPageUrl,
-          email_type: classifyPublicEmail(email),
-          checked_at: new Date().toISOString(),
-        },
-      };
-      lead = await updateLead(user, latestBeforeContactUpdate, contactAdditions);
     } else {
       contactStatus = lead.website?.trim() ? "failed" : "skipped";
       errorCodes.push(errorCode(contactResult.reason));

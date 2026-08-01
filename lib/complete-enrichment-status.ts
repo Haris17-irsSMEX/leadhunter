@@ -34,6 +34,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function completeProgressFromJobItem(item: EnrichmentJobItem): CompleteEnrichmentProgress {
+  const persisted = item.lead ? getCompleteEnrichmentProgress(item.lead) : null;
+  if (
+    persisted &&
+    ["complete", "partial", "not_found", "failed", "cancelled"].includes(persisted.status) &&
+    ["complete", "partial", "no_additional_data", "failed", "cancelled"].includes(item.status)
+  ) {
+    return persisted;
+  }
+
   const status: CompleteEnrichmentOverallStatus = item.status === "no_additional_data"
     ? "not_found"
     : item.status;

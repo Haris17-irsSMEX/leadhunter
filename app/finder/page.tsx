@@ -212,20 +212,27 @@ function statusBadge(label: string, status?: string) {
 
 function restaurantEmailStatus(lead: Lead) {
   const enrichment = lead.raw_metadata?.restaurant_enrichment;
+  const contactEnrichment = lead.raw_metadata?.contact_enrichment;
   const emailStatus =
     enrichment && typeof enrichment === "object" && "email_status" in enrichment && typeof enrichment.email_status === "string"
       ? enrichment.email_status
       : undefined;
+  const contactEmailStatus =
+    contactEnrichment && typeof contactEnrichment === "object" && "status" in contactEnrichment && typeof contactEnrichment.status === "string"
+      ? contactEnrichment.status
+      : undefined;
+  const contactChecked =
+    contactEnrichment && typeof contactEnrichment === "object" && "checked_at" in contactEnrichment && typeof contactEnrichment.checked_at === "string";
 
   if (cleanSafePublicEmail(lead.email)) {
     return statusBadge("Email found", "found");
   }
 
-  if (emailStatus === "error") {
+  if (emailStatus === "error" || contactEmailStatus === "error") {
     return statusBadge("Error", "error");
   }
 
-  if (emailStatus === "not_found") {
+  if (emailStatus === "not_found" || contactChecked) {
     return statusBadge("No public email found", "not_found");
   }
 

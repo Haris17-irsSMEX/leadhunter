@@ -185,7 +185,13 @@ function discoverUsefulLinks(baseUrl: string, html: string) {
 
 function orderedPages(baseUrl: string, discoveredLinks: string[]) {
   const fixedUrls = PAGE_PATHS.map((path) => pageUrl(baseUrl, path));
-  return [...new Set([...fixedUrls, ...discoveredLinks])].slice(0, WORKLOAD_LIMITS.websiteResearch.maxPages);
+  const homepageUrl = pageUrl(baseUrl, "");
+  const rankedDiscoveredLinks = [...discoveredLinks].sort((left, right) => {
+    const rank = (value: string) => /contact/i.test(value) ? 0 : /locations?/i.test(value) ? 1 : /team/i.test(value) ? 2 : 3;
+    return rank(left) - rank(right);
+  });
+  return [...new Set([homepageUrl, ...rankedDiscoveredLinks, ...fixedUrls])]
+    .slice(0, WORKLOAD_LIMITS.websiteResearch.maxPages);
 }
 
 export async function findPublicBusinessEmail(
@@ -201,7 +207,7 @@ export async function findPublicBusinessEmail(
   }
 
   const origin = new URL(baseUrl).origin;
-  const cacheKey = publicCacheKey("website-contact", origin, "v2");
+  const cacheKey = publicCacheKey("website-contact", origin, "v3");
   if (options.forceRefresh) {
     await deletePublicDataCache(cacheKey);
   } else {
