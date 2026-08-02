@@ -23,14 +23,12 @@ export async function POST(request: NextRequest) {
       cityPlaceId?: string;
       categoryGroups?: unknown;
       maxOpportunities?: number;
-      enrichmentMode?: string;
     };
     return NextResponse.json(await startCityOpportunityScan(user, {
       city: body.city ?? "",
       cityPlaceId: body.cityPlaceId?.trim() || undefined,
       categoryGroupIds: parseCityScanCategoryGroups(body.categoryGroups),
       requestedOpportunities: Number(body.maxOpportunities ?? 25),
-      enrichmentMode: body.enrichmentMode === "complete" ? "complete" : "basic",
     }));
   } catch (error) {
     if (error instanceof CityScanError) return cityScanErrorResponse(error);

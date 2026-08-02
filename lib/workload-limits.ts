@@ -17,35 +17,6 @@ export const WORKLOAD_LIMITS = {
     staleAfterMs: 10 * 60 * 1_000,
     batchLockSeconds: 45,
   },
-  completeEnrichment: {
-    maxLeadIdsPerBulkRequest: 5,
-    batchConcurrency: 2,
-    maxActivePerUser: 3,
-    activeLockSeconds: 10 * 60,
-    staleAfterMs: 15 * 60 * 1_000,
-    freshnessMs: 7 * 24 * 60 * 60 * 1_000,
-    forceRefreshCooldownSeconds: 5 * 60,
-    rateLimitWindowSeconds: 15 * 60,
-    rateLimitLeads: 60,
-    maxPagesPerLead: 10,
-    maxTotalPagesPerBulkRequest: 50,
-  },
-  durableEnrichment: {
-    maxLeadsPerJob: 20,
-    maxActiveJobsPerUser: 2,
-    maxConsumerAttempts: 3,
-    maxConsumerConcurrency: 3,
-    workerLeaseSeconds: 4 * 60,
-    runningRecoveryMs: 3 * 60 * 1_000,
-    queueRetentionSeconds: 7 * 24 * 60 * 60,
-    queueVisibilitySeconds: 5 * 60,
-    retryCooldownSeconds: 60,
-    maxDirectPagesPerLead: 6,
-    maxCrawlerPagesPerLead: 5,
-    maxPublicSearchRequestsPerLead: 3,
-    crawlerTimeoutMs: 45_000,
-    crawlerMaxResponseBytes: 1_500_000,
-  },
   websiteResearch: {
     maxRedirects: 3,
     maxResponseBytes: 350_000,
@@ -71,14 +42,12 @@ export type CityScanWorkloadEstimate = {
   maxPlacesRequests: number;
   possibleDetailsRequests: number;
   requestedOpportunities: number;
-  optionalEnrichmentLeads: number;
 };
 
 export function estimateCityScanWorkload(input: {
   zones: number;
   categorySearches: number;
   requestedOpportunities: number;
-  completeEnrichment: boolean;
 }): CityScanWorkloadEstimate {
   return {
     zones: Math.min(Math.max(Math.floor(input.zones), 0), WORKLOAD_LIMITS.cityScan.maxZones),
@@ -95,27 +64,5 @@ export function estimateCityScanWorkload(input: {
       Math.max(Math.floor(input.requestedOpportunities), 0),
       WORKLOAD_LIMITS.cityScan.maxRequestedOpportunities,
     ),
-    optionalEnrichmentLeads: input.completeEnrichment
-      ? Math.min(
-          Math.max(Math.floor(input.requestedOpportunities), 0),
-          WORKLOAD_LIMITS.completeEnrichment.maxLeadIdsPerBulkRequest,
-        )
-      : 0,
-  };
-}
-
-export function estimateCompleteEnrichmentWorkload(leadCount: number) {
-  const leads = Math.min(
-    Math.max(Math.floor(leadCount), 0),
-    WORKLOAD_LIMITS.completeEnrichment.maxLeadIdsPerBulkRequest,
-  );
-  return {
-    leads,
-    websites: leads,
-    maxWebsitePages: Math.min(
-      leads * WORKLOAD_LIMITS.completeEnrichment.maxPagesPerLead,
-      WORKLOAD_LIMITS.completeEnrichment.maxTotalPagesPerBulkRequest,
-    ),
-    maxPublicSearchLookups: leads,
   };
 }

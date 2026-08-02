@@ -1,20 +1,7 @@
 import "server-only";
 
 import { isSafePublicEmail } from "@/lib/email-safety";
-import {
-  fetchPublicWebPage,
-  normalizePublicWebsiteUrl,
-  type PublicWebResearchContext,
-} from "@/lib/public-web";
-import {
-  deletePublicDataCache,
-  getPublicDataCache,
-  PUBLIC_DATA_FRESHNESS,
-  publicCacheKey,
-  setPublicDataCache,
-} from "@/lib/public-data-cache";
-import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
-import { extractStructuredPublicData } from "@/lib/structured-data";
+import { fetchPublicWebPage, normalizePublicWebsiteUrl } from "@/lib/public-web";
 import type { DeliveryPlatformStatus } from "@/lib/types";
 
 export type PublicEmailResult = {
@@ -24,13 +11,14 @@ export type PublicEmailResult = {
   confidence?: number;
   status: Extract<DeliveryPlatformStatus, "found" | "not_found" | "error" | "not_checked">;
   error?: string;
-  cached?: boolean;
 };
 
 export type RestaurantEmailResult = PublicEmailResult;
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+const REQUEST_TIMEOUT_MS = 8_000;
 const PAGE_PATHS = ["", "/contact", "/contact-us", "/about", "/about-us", "/team", "/locations"] as const;
+const MAX_PAGES_TO_SCAN = 10;
 const PREFERRED_PREFIXES = [
   "info",
   "hello",
@@ -100,26 +88,23 @@ function confidenceForEmail(email: string, sourceUrl: string) {
   return Math.min(100, confidence);
 }
 
-async function fetchPublicPage(url: string, context?: PublicWebResearchContext) {
+async function fetchPublicPage(url: string) {
   const page = await fetchPublicWebPage(url, {
-    timeoutMs: WORKLOAD_LIMITS.websiteResearch.requestTimeoutMs,
-    maxBytes: WORKLOAD_LIMITS.websiteResearch.maxResponseBytes,
-    maxRedirects: WORKLOAD_LIMITS.websiteResearch.maxRedirects,
-    userAgent: "LeadHunter/1.0 CompletePublicResearch",
-  }, context);
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    maxBytes: 250_000,
+    maxRedirects: 3,
+    userAgent: "LeadHunter/1.0 PublicEmailResearch",
+  });
   return page.html;
 }
 
-function extractEmails(html: string, sourceUrl: string) {
+function extractEmails(html: string) {
   const decoded = decodeHtml(html)
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
     .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
     .replace(/<img\b[^>]*>/gi, " ")
     .replace(/\s(?:src|srcset|data-src)=["'][^"']*["']/gi, " ");
   const candidates: Array<{ email: string; context: string }> = [];
-  for (const email of extractStructuredPublicData(html, sourceUrl).emails) {
-    candidates.push({ email, context: "structured public business data" });
-  }
 
   for (const match of decoded.matchAll(/mailto:([^"'?<>\s]+)/gi)) {
     const email = safeDecodeUriComponent(match[1]?.trim() ?? "");
@@ -147,7 +132,7 @@ function extractEmails(html: string, sourceUrl: string) {
 }
 
 function isContactLikePath(value: string) {
-  return /contact|contact-us|about|about-us|team|locations?/i.test(value);
+  return /contact|contact-us|kontakt|contatti|about|about-us|team|locations?/i.test(value);
 }
 
 function discoverUsefulLinks(baseUrl: string, html: string) {
@@ -187,18 +172,13 @@ function orderedPages(baseUrl: string, discoveredLinks: string[]) {
   const fixedUrls = PAGE_PATHS.map((path) => pageUrl(baseUrl, path));
   const homepageUrl = pageUrl(baseUrl, "");
   const rankedDiscoveredLinks = [...discoveredLinks].sort((left, right) => {
-    const rank = (value: string) => /contact/i.test(value) ? 0 : /locations?/i.test(value) ? 1 : /team/i.test(value) ? 2 : 3;
+    const rank = (value: string) => /contact|kontakt|contatti/i.test(value) ? 0 : /locations?/i.test(value) ? 1 : /team/i.test(value) ? 2 : 3;
     return rank(left) - rank(right);
   });
-  return [...new Set([homepageUrl, ...rankedDiscoveredLinks, ...fixedUrls])]
-    .slice(0, WORKLOAD_LIMITS.websiteResearch.maxPages);
+  return [...new Set([homepageUrl, ...rankedDiscoveredLinks, ...fixedUrls])].slice(0, MAX_PAGES_TO_SCAN);
 }
 
-export async function findPublicBusinessEmail(
-  website?: string,
-  context?: PublicWebResearchContext,
-  options: { forceRefresh?: boolean } = {},
-): Promise<PublicEmailResult> {
+export async function findPublicBusinessEmail(website?: string): Promise<PublicEmailResult> {
   const normalizedWebsite = normalizePublicWebsiteUrl(website);
   const baseUrl = normalizedWebsite?.toString().replace(/\/+$/, "");
 
@@ -206,36 +186,27 @@ export async function findPublicBusinessEmail(
     return { status: "not_checked" };
   }
 
-  const origin = new URL(baseUrl).origin;
-  const cacheKey = publicCacheKey("website-contact", origin, "v3");
-  if (options.forceRefresh) {
-    await deletePublicDataCache(cacheKey);
-  } else {
-    const cached = await getPublicDataCache<PublicEmailResult>(cacheKey);
-    if (cached) return { ...cached, cached: true };
-  }
-
   let attempted = false;
+  let fetchedPage = false;
   let contactPageUrl: string | undefined;
   let discoveredLinks: string[] = [];
   const homepageUrl = pageUrl(baseUrl, "");
 
   try {
     attempted = true;
-    const html = await fetchPublicPage(homepageUrl, context);
+    const html = await fetchPublicPage(homepageUrl);
+    fetchedPage = true;
     discoveredLinks = discoverUsefulLinks(baseUrl, html);
-    const [email] = extractEmails(html, homepageUrl);
+    const [email] = extractEmails(html);
 
     if (email) {
-      const result: PublicEmailResult = {
+      return {
         email,
         sourceUrl: homepageUrl,
         contactPageUrl: discoveredLinks.find((link) => isContactLikePath(link)),
         confidence: confidenceForEmail(email, homepageUrl),
         status: "found",
       };
-      await setPublicDataCache(cacheKey, result, PUBLIC_DATA_FRESHNESS.websiteContactMs);
-      return result;
     }
   } catch {
     // Continue with common public contact/about paths below.
@@ -245,35 +216,30 @@ export async function findPublicBusinessEmail(
 
     try {
       attempted = true;
-      const html = await fetchPublicPage(targetUrl, context);
+      const html = await fetchPublicPage(targetUrl);
+      fetchedPage = true;
       if (!contactPageUrl && isContactLikePath(new URL(targetUrl).pathname)) {
         contactPageUrl = targetUrl;
       }
-      const [email] = extractEmails(html, targetUrl);
+      const [email] = extractEmails(html);
 
       if (email) {
-        const result: PublicEmailResult = {
+        return {
           email,
           sourceUrl: targetUrl,
           contactPageUrl: contactPageUrl ?? targetUrl,
           confidence: confidenceForEmail(email, targetUrl),
           status: "found",
         };
-        await setPublicDataCache(cacheKey, result, PUBLIC_DATA_FRESHNESS.websiteContactMs);
-        return result;
       }
     } catch {
       continue;
     }
   }
 
-  const result: PublicEmailResult = attempted
+  return fetchedPage
     ? { status: "not_found", email: null, contactPageUrl }
-    : { status: "error", email: null, error: "Unable to check restaurant website." };
-  if (result.status === "not_found") {
-    await setPublicDataCache(cacheKey, result, PUBLIC_DATA_FRESHNESS.invalidWebsiteMs);
-  }
-  return result;
+    : { status: "error", email: null, error: attempted ? "Unable to check the public business website." : "No website was checked." };
 }
 
 export async function findRestaurantPublicEmail(website?: string): Promise<RestaurantEmailResult> {

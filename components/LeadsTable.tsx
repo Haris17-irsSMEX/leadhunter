@@ -3,14 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, Sparkles, Trash2, UserSearch, Users, X } from "lucide-react";
+import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, Trash2, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
-import {
-  completeEnrichmentStatusLabel,
-  completeEnrichmentStepLabel,
-  enrichmentJobStepLabel,
-  getCompleteEnrichmentProgress,
-} from "@/lib/complete-enrichment-status";
 import {
   getBestContactMethod,
   getContactabilityStatus,
@@ -25,7 +19,7 @@ import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { getCategorySummary, getCleanCategoryLabels } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
-import type { CompleteEnrichmentProgress, DecisionMaker, DeliveryPlatformId, EnrichmentJob, EnrichmentJobItem, Lead } from "@/lib/types";
+import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
@@ -76,14 +70,6 @@ type DecisionMakerResearchPayload = {
   message?: string;
   error?: string;
 };
-type CompleteEnrichmentApiResult = {
-  leadId?: string;
-  success?: boolean;
-  lead?: Lead;
-  progress?: CompleteEnrichmentProgress;
-  message?: string;
-};
-type EnrichmentJobPayload = { job: EnrichmentJob; items: EnrichmentJobItem[]; error?: string };
 type ManualDecisionMakerInput = {
   name: string;
   role: string;
@@ -414,15 +400,13 @@ function statusBadge(label: string, status?: string) {
   const className =
     label === "Provider limit"
       ? "status-badge-warning"
-      : normalized === "found" || normalized === "completed" || normalized === "complete"
+      : normalized === "found" || normalized === "completed"
       ? "status-badge-success"
-      : normalized === "running" || normalized === "queued"
-        ? "status-badge-info"
       : normalized === "unclear" || normalized === "partial"
         ? "status-badge-warning"
-        : normalized === "error" || normalized === "failed"
+        : normalized === "error"
           ? "status-badge-danger"
-          : normalized === "not_found" || normalized === "cancelled"
+          : normalized === "not_found"
             ? "status-badge-muted"
             : "status-badge-muted";
 
@@ -580,6 +564,18 @@ function needsEmailEnrichment(lead: Lead) {
   return Boolean(lead.id && lead.website?.trim() && !cleanSafePublicEmail(lead.email));
 }
 
+function manualEmailResearchStatus(lead: Lead) {
+  if (cleanSafePublicEmail(lead.email)) return "found" as const;
+  const metadata = lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
+    ? lead.raw_metadata
+    : {};
+  const contact = metadata.contact_enrichment && typeof metadata.contact_enrichment === "object"
+    ? metadata.contact_enrichment as Record<string, unknown>
+    : {};
+  if (contact.research_source !== "manual") return "not_researched" as const;
+  return contact.status === "error" ? "error" as const : "not_found" as const;
+}
+
 function decisionMakerStatusLabel(lead: Lead) {
   const primary = getPrimaryDecisionMaker(lead);
   if (primary) return primary.verification_status === "manually_verified" ? "Verified" : `${primary.confidence} confidence`;
@@ -634,13 +630,11 @@ function ProfessionalLeadRow({
   onCopyWebsite,
   onDelete,
   onEnrichEmail,
-  onCompleteEnrichment,
   onResearchDecisionMaker,
   onUpdateDecisionMaker,
   onAddDecisionMaker,
   onEditDecisionMaker,
   isEnriching,
-  isCompleteEnriching,
   isResearchingDecisionMaker,
 }: {
   lead: Lead;
@@ -654,13 +648,11 @@ function ProfessionalLeadRow({
   onCopyWebsite: () => void;
   onDelete: () => void;
   onEnrichEmail: () => void;
-  onCompleteEnrichment: () => void;
   onResearchDecisionMaker: () => void;
   onUpdateDecisionMaker: (candidate: DecisionMaker, action: "verify" | "reject" | "primary" | "delete") => void;
   onAddDecisionMaker: (candidate: ManualDecisionMakerInput) => Promise<boolean>;
   onEditDecisionMaker: (candidateId: string, candidate: ManualDecisionMakerInput) => Promise<boolean>;
   isEnriching: boolean;
-  isCompleteEnriching: boolean;
   isResearchingDecisionMaker: boolean;
 }) {
   const [showManualCandidate, setShowManualCandidate] = useState(false);
@@ -676,6 +668,7 @@ function ProfessionalLeadRow({
   const industry = industryPreview(lead.industry);
   const canFindEmail = needsEmailEnrichment(lead);
   const safeEmail = cleanSafePublicEmail(lead.email);
+  const emailResearchStatus = manualEmailResearchStatus(lead);
   const websiteLabel = displayDomain(lead.website) || "No website";
   const pageUrl = getContactPageUrl(lead) ?? undefined;
   const bestContactMethod = getBestContactMethod(lead);
@@ -683,9 +676,6 @@ function ProfessionalLeadRow({
   const showDeliveryIntelligence = hasDeliverySignal(lead);
   const primaryDecisionMaker = getPrimaryDecisionMaker(lead);
   const outreach = getOutreachIntelligence(lead);
-  const completeProgress = getCompleteEnrichmentProgress(lead);
-  const hasCompleteRun = Boolean(completeProgress?.started_at || completeProgress?.completed_at);
-  const completeStatus = completeProgress?.status ?? "not_started";
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -730,7 +720,13 @@ function ProfessionalLeadRow({
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
             {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
-            {safeEmail ? statusBadge("Public email found", "found") : statusBadge("No public email found", "not_found")}
+            {emailResearchStatus === "found"
+              ? statusBadge("Public email found", "found")
+              : emailResearchStatus === "error"
+                ? statusBadge("Email research failed", "error")
+                : emailResearchStatus === "not_found"
+                  ? statusBadge("No public email found", "not_found")
+                  : statusBadge("Not researched", "not_checked")}
             {safeEmail ? <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{safeEmail}</p> : null}
             {!safeEmail && pageUrl ? (
               <SmartLink href={pageUrl} label="Use contact form" className="max-w-fit" />
@@ -745,12 +741,6 @@ function ProfessionalLeadRow({
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
-            {hasCompleteRun || isCompleteEnriching
-              ? statusBadge(
-                  isCompleteEnriching ? "Enrichment running" : completeEnrichmentStatusLabel(completeStatus),
-                  isCompleteEnriching ? "running" : completeStatus,
-                )
-              : statusBadge("Needs enrichment", "not_checked")}
             <DecisionMakerSummary lead={lead} />
             <div>
               <p className="text-sm font-semibold text-[var(--text-primary)]">{outreach.readinessScore}/100</p>
@@ -769,6 +759,16 @@ function ProfessionalLeadRow({
                 <Mail className="h-3.5 w-3.5" />
                 Email
               </button>
+            ) : canFindEmail ? (
+              <button
+                type="button"
+                disabled={isEnriching}
+                onClick={onEnrichEmail}
+                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
+                {isEnriching ? "Searching…" : "Find email"}
+              </button>
             ) : pageUrl ? (
               <a
                 href={pageUrl}
@@ -778,21 +778,20 @@ function ProfessionalLeadRow({
               >
                 Contact
               </a>
-            ) : lead.id ? (
-              <button
-                type="button"
-                disabled={isCompleteEnriching}
-                onClick={onCompleteEnrichment}
-                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isCompleteEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                {isCompleteEnriching ? "Enriching..." : "Enrich"}
-              </button>
             ) : lead.phone ? (
               <button type="button" onClick={onCopyPhone} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
                 Phone
               </button>
             ) : null}
+            <button
+              type="button"
+              disabled={isResearchingDecisionMaker}
+              onClick={onResearchDecisionMaker}
+              className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
+              {isResearchingDecisionMaker ? "Researching…" : "Research"}
+            </button>
             <details className="group relative">
               <summary
                 className="icon-button h-9 w-9 cursor-pointer list-none"
@@ -825,18 +824,6 @@ function ProfessionalLeadRow({
                     Copy email
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={isCompleteEnriching}
-                  onClick={onCompleteEnrichment}
-                  className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50"
-                >
-                  {isCompleteEnriching
-                    ? "Enriching profile..."
-                    : hasCompleteRun
-                      ? "Refresh complete enrichment"
-                      : "Complete enrichment"}
-                </button>
                 {canFindEmail ? (
                   <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
                     Find email
@@ -869,12 +856,6 @@ function ProfessionalLeadRow({
                     {showDeliveryIntelligence
                       ? statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)
                       : null}
-                    {hasCompleteRun || isCompleteEnriching
-                      ? statusBadge(
-                          isCompleteEnriching ? "Complete enrichment running" : completeEnrichmentStatusLabel(completeStatus),
-                          isCompleteEnriching ? "running" : completeStatus,
-                        )
-                      : null}
                   </div>
                   <p className="mt-2 text-sm text-[var(--text-secondary)]">
                     Scraped {formatDate(lead.scraped_at) || formatRelative(lead.scraped_at)}
@@ -886,52 +867,6 @@ function ProfessionalLeadRow({
                   <SmartLink href={lead.source_url?.startsWith("http") ? lead.source_url : undefined} label="Open source" />
                 </div>
               </div>
-
-              <section className="mt-5 rounded-2xl border border-blue-200 bg-[var(--primary-soft)] p-4" aria-live="polite">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="app-label text-xs">Complete outreach profile</p>
-                    <p className="mt-1 text-sm text-[var(--text-secondary)]">
-                      Public contact, WhatsApp evidence, decision-maker research, and outreach context.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={isCompleteEnriching}
-                    onClick={onCompleteEnrichment}
-                    className="btn-secondary shrink-0 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isCompleteEnriching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                    {isCompleteEnriching
-                      ? "Enriching..."
-                      : hasCompleteRun
-                        ? "Refresh enrichment"
-                        : "Complete enrichment"}
-                  </button>
-                </div>
-                <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                  {[
-                    ["Contact details", completeProgress?.contact_status ?? "not_started"],
-                    ["WhatsApp evidence", completeProgress?.whatsapp_status ?? "not_started"],
-                    ["Decision-maker", completeProgress?.decision_maker_status ?? "not_started"],
-                    ["Outreach profile", completeProgress?.outreach_status ?? "not_started"],
-                  ].map(([label, status]) => (
-                    <div key={label} className="rounded-xl border border-blue-100 bg-white p-3">
-                      <p className="text-xs font-semibold text-[var(--text-primary)]">{label}</p>
-                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                        {isCompleteEnriching && status === "not_started"
-                          ? "Queued"
-                          : completeEnrichmentStepLabel(status as CompleteEnrichmentProgress["contact_status"])}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                {!lead.website ? (
-                  <p className="mt-3 text-xs text-[var(--text-secondary)]">
-                    No website is available to scan for public email or contact-page information. Public business research can still continue.
-                  </p>
-                ) : null}
-              </section>
 
               <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
                 <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
@@ -965,8 +900,12 @@ function ProfessionalLeadRow({
                       </>
                     ) : (
                       <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3 text-sm text-[var(--text-secondary)]">
-                        No public email found.
-                        {pageUrl || lead.phone ? " Use the contact page or phone outreach." : null}
+                        {emailResearchStatus === "error"
+                          ? "Email research failed — retry."
+                          : emailResearchStatus === "not_found"
+                            ? "No public email found."
+                            : "Public email has not been researched yet."}
+                        {emailResearchStatus !== "error" && (pageUrl || lead.phone) ? " Use the contact page or phone outreach." : null}
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -1298,35 +1237,7 @@ export default function LeadsTable() {
   const [researchingDecisionMakerIds, setResearchingDecisionMakerIds] = useState<string[]>([]);
   const researchingDecisionMakerIdsRef = useRef(new Set<string>());
   const leadsRequestIdRef = useRef(0);
-  const [bulkEnrichmentJob, setBulkEnrichmentJob] = useState<EnrichmentJobPayload | null>(null);
-  const [showBulkEnrichmentConfirmation, setShowBulkEnrichmentConfirmation] = useState(false);
-  const bulkJobToastRef = useRef(new Set<string>());
-  const [completeEnrichingIds, setCompleteEnrichingIds] = useState<string[]>([]);
-  const completeEnrichingIdsRef = useRef(new Set<string>());
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
-
-  const bulkEnrichProgress = useMemo(() => {
-    const job = bulkEnrichmentJob?.job;
-    if (!job) return null;
-    return {
-      total: job.total_items,
-      processed: job.completed_items + job.partial_items + job.no_data_items + job.failed_items + job.cancelled_items,
-      queued: job.queued_items,
-      running: job.running_items,
-      complete: job.completed_items,
-      partial: job.partial_items,
-      notFound: job.no_data_items,
-      failed: job.failed_items,
-      cancelled: job.cancelled_items,
-    };
-  }, [bulkEnrichmentJob]);
-  const bulkJobRunning = Boolean(
-    bulkEnrichmentJob && ["queued", "running", "cancelling"].includes(bulkEnrichmentJob.job.status),
-  );
-  const bulkJobLeadIds = useMemo(
-    () => new Set((bulkEnrichmentJob?.items ?? []).filter((item) => item.status === "queued" || item.status === "running").map((item) => item.lead_id)),
-    [bulkEnrichmentJob?.items],
-  );
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -1434,46 +1345,6 @@ export default function LeadsTable() {
     const timer = window.setTimeout(() => setCopyMessage(""), 2000);
     return () => window.clearTimeout(timer);
   }, [copyMessage]);
-
-  useEffect(() => {
-    const jobId = bulkEnrichmentJob?.job.id;
-    if (!jobId || !bulkJobRunning) return;
-    let active = true;
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}`, { cache: "no-store" });
-        const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
-        if (!active || !response.ok || !payload.job) return;
-        setBulkEnrichmentJob(payload);
-        const updatedLeads = payload.items.map((item) => item.lead).filter((lead): lead is Lead => Boolean(lead?.id));
-        if (updatedLeads.length) {
-          const updates = new Map(updatedLeads.map((lead) => [lead.id, lead]));
-          setLeads((current) => current.map((lead) => updates.get(lead.id) ?? lead));
-        }
-
-        if (!["queued", "running", "cancelling"].includes(payload.job.status) && !bulkJobToastRef.current.has(jobId)) {
-          bulkJobToastRef.current.add(jobId);
-          const useful = payload.job.completed_items + payload.job.partial_items;
-          showToast(
-            payload.job.status === "cancelled"
-              ? "Enrichment stopped. Results already completed were preserved."
-              : `Enrichment finished. ${useful} useful profile${useful === 1 ? "" : "s"} updated.`,
-            payload.job.failed_items || payload.job.partial_items ? "warning" : useful ? "success" : "info",
-          );
-        }
-      } catch {
-        // A later poll can recover transient progress-request failures.
-      }
-    };
-
-    void poll();
-    const timer = window.setInterval(() => void poll(), 2_500);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [bulkEnrichmentJob?.job.id, bulkJobRunning, showToast]);
 
   const filteredLeads = useMemo(() => {
     const query = normalizeText(search);
@@ -1713,7 +1584,7 @@ export default function LeadsTable() {
     }
   }
 
-  async function enrichLead(id: string, options: { quiet?: boolean } = {}) {
+  async function enrichLead(id: string) {
     if (enrichingLeadIdsRef.current.has(id)) {
       return undefined;
     }
@@ -1727,6 +1598,10 @@ export default function LeadsTable() {
       const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich-email`, { method: "POST" });
       const payload = (await parseResponseSafely(response)) as unknown as EmailEnrichmentPayload;
 
+      if (payload.id) {
+        updateLead(payload);
+      }
+
       if (!response.ok) {
         const apiMessage = getApiErrorMessage(
           response,
@@ -1737,14 +1612,8 @@ export default function LeadsTable() {
         );
       }
 
-      if (payload.id) {
-        updateLead(payload);
-      }
-
-      if (!options.quiet) {
-        const feedback = emailSearchFeedback(previousLead, payload);
-        showToast(feedback.message, feedback.type);
-      }
+      const feedback = emailSearchFeedback(previousLead, payload);
+      showToast(feedback.message, feedback.type);
 
       return payload;
     } catch (error) {
@@ -1756,91 +1625,6 @@ export default function LeadsTable() {
     } finally {
       enrichingLeadIdsRef.current.delete(id);
       setEnrichingIds((current) => current.filter((item) => item !== id));
-    }
-  }
-
-  async function completeLead(id: string, force = false) {
-    if (completeEnrichingIdsRef.current.has(id)) return;
-    completeEnrichingIdsRef.current.add(id);
-    setCompleteEnrichingIds((current) => [...new Set([...current, id])]);
-
-    try {
-      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/complete-enrichment`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
-      });
-      const payload = (await parseResponseSafely(response)) as CompleteEnrichmentApiResult & { error?: string };
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(response, payload.error ?? "Complete enrichment could not be completed."));
-      }
-      if (payload.lead?.id) updateLead(payload.lead);
-
-      const status = payload.progress?.status ?? "partial";
-      showToast(
-        payload.message ?? completeEnrichmentStatusLabel(status),
-        status === "complete" ? "success" : status === "failed" ? "error" : "info",
-      );
-    } catch (completeError) {
-      showToast(
-        completeError instanceof Error ? completeError.message : "Complete enrichment could not be completed.",
-        "error",
-      );
-    } finally {
-      completeEnrichingIdsRef.current.delete(id);
-      setCompleteEnrichingIds((current) => current.filter((leadId) => leadId !== id));
-    }
-  }
-
-  async function enrichSelected() {
-    const targets = [...new Set(selectedIds.filter(Boolean))].slice(0, 20);
-    if (!targets.length || bulkJobRunning) return;
-    try {
-      const response = await fetch("/api/enrichment-jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: targets, mode: "complete_outreach_profile", sourceContext: "selected_leads" }),
-      });
-      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
-      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to queue selected leads.");
-      setBulkEnrichmentJob(payload);
-      showToast(`Complete outreach enrichment queued for ${targets.length} lead${targets.length === 1 ? "" : "s"}.`, "info");
-      if (selectedIds.length > targets.length) {
-        showToast(`The first ${targets.length} selected leads were queued. Start another job for the remainder.`, "warning");
-      }
-    } catch (completeError) {
-      const message = completeError instanceof Error ? completeError.message : "Unable to enrich selected leads.";
-      setError(message);
-      showToast(message, "error");
-    }
-  }
-
-  async function cancelBulkCompleteEnrichment() {
-    const jobId = bulkEnrichmentJob?.job.id;
-    if (!jobId) return;
-    try {
-      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" });
-      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
-      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to cancel pending enrichment.");
-      setBulkEnrichmentJob(payload);
-      showToast("Pending enrichment is being cancelled. Completed data is preserved.", "info");
-    } catch (cancelError) {
-      showToast(cancelError instanceof Error ? cancelError.message : "Unable to cancel pending enrichment.", "error");
-    }
-  }
-
-  async function retryBulkCompleteEnrichment() {
-    const jobId = bulkEnrichmentJob?.job.id;
-    if (!jobId) return;
-    try {
-      const response = await fetch(`/api/enrichment-jobs/${encodeURIComponent(jobId)}/retry`, { method: "POST" });
-      const payload = (await parseResponseSafely(response)) as EnrichmentJobPayload;
-      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Unable to retry enrichment.");
-      bulkJobToastRef.current.delete(jobId);
-      setBulkEnrichmentJob(payload);
-      showToast("Retryable enrichment items were queued again.", "info");
-    } catch (retryError) {
-      showToast(retryError instanceof Error ? retryError.message : "Unable to retry enrichment.", "error");
     }
   }
 
@@ -2251,45 +2035,8 @@ export default function LeadsTable() {
 
       {selectedIds.length ? (
         <div className="app-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-[var(--text-primary)]">{selectedIds.length} selected</p>
-            {bulkEnrichProgress ? (
-              <div className="mt-1 space-y-1 text-xs text-[var(--text-secondary)]" aria-live="polite">
-                <p>Enriched {bulkEnrichProgress.processed} of {bulkEnrichProgress.total} leads</p>
-                <p>
-                  Queued: {bulkEnrichProgress.queued} · Running: {bulkEnrichProgress.running} · Complete: {bulkEnrichProgress.complete} · Partial: {bulkEnrichProgress.partial} · No additional data: {bulkEnrichProgress.notFound} · Failed: {bulkEnrichProgress.failed} · Cancelled: {bulkEnrichProgress.cancelled}
-                </p>
-                {bulkEnrichmentJob?.items
-                  .filter((item) => item.status === "queued" || item.status === "running")
-                  .slice(0, 3)
-                  .map((item) => (
-                    <p key={item.id}>{item.lead?.company_name ?? "Business"}: {enrichmentJobStepLabel(item.current_step)}</p>
-                  ))}
-              </div>
-            ) : null}
-          </div>
+          <p className="text-sm font-medium text-[var(--text-primary)]">{selectedIds.length} selected</p>
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              disabled={bulkJobRunning}
-              onClick={() => setShowBulkEnrichmentConfirmation(true)}
-              className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {bulkJobRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {bulkJobRunning ? "Enriching selected..." : `Enrich selected (${Math.min(selectedIds.length, 20)})`}
-            </button>
-            {bulkJobRunning ? (
-              <button type="button" onClick={() => void cancelBulkCompleteEnrichment()} className="btn-secondary">
-                <X className="h-4 w-4" />
-                Cancel pending
-              </button>
-            ) : null}
-            {!bulkJobRunning && bulkEnrichProgress?.failed ? (
-              <button type="button" onClick={() => void retryBulkCompleteEnrichment()} className="btn-secondary">
-                <Sparkles className="h-4 w-4" />
-                Retry failed
-              </button>
-            ) : null}
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary whitespace-nowrap">
               <FileSpreadsheet className="h-4 w-4" />
               Sync selected
@@ -2388,15 +2135,6 @@ export default function LeadsTable() {
                           void handleEnrichLead(lead.id);
                         }
                       }}
-                      onCompleteEnrichment={() => {
-                        if (!lead.id) return;
-                        const progress = getCompleteEnrichmentProgress(lead);
-                        const previouslyChecked = Boolean(progress.checked_at || progress.completed_at);
-                        const force = previouslyChecked
-                          ? window.confirm("Refresh all public enrichment for this lead? Existing verified and manual data will be preserved.")
-                          : false;
-                        if (!previouslyChecked || force) void completeLead(lead.id, force);
-                      }}
                       onResearchDecisionMaker={() => {
                         if (lead.id) {
                           const force = Boolean(
@@ -2418,7 +2156,6 @@ export default function LeadsTable() {
                         lead.id ? editDecisionMaker(lead.id, candidateId, candidate) : Promise.resolve(false)
                       }
                       isEnriching={lead.id ? enrichingIds.includes(lead.id) : false}
-                      isCompleteEnriching={lead.id ? completeEnrichingIds.includes(lead.id) || bulkJobLeadIds.has(lead.id) : false}
                       isResearchingDecisionMaker={lead.id ? researchingDecisionMakerIds.includes(lead.id) : false}
                       onDelete={() => {
                         if (lead.id) {
@@ -2478,40 +2215,6 @@ export default function LeadsTable() {
         restaurantProfileAvailable={restaurantProfileAvailable}
         onActionComplete={() => setSelectedIds([])}
       />
-      {showBulkEnrichmentConfirmation ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(11,22,53,0.45)] p-4" role="presentation">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="bulk-enrichment-confirmation-title"
-            className="w-full max-w-lg rounded-3xl border border-[var(--border-default)] bg-white p-6 shadow-[var(--shadow-elevated)]"
-          >
-            <h2 id="bulk-enrichment-confirmation-title" className="app-section-title">Complete business enrichment</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--text-secondary)]">
-              LeadHunter will research public business websites and public sources for email addresses, contact pages, public profiles and decision-makers. Results will update as they are found.
-            </p>
-            <div className="mt-4 rounded-2xl bg-[var(--surface-secondary)] p-4 text-xs leading-5 text-[var(--text-secondary)]">
-              <p><strong className="text-[var(--text-primary)]">Leads to enrich:</strong> {Math.min(selectedIds.length, 20)}</p>
-              <p><strong className="text-[var(--text-primary)]">Existing recent results:</strong> {leads.filter((lead) => lead.id && selectedIds.includes(lead.id) && ["complete", "partial", "not_found"].includes(getCompleteEnrichmentProgress(lead).status)).length} may be reused</p>
-              <p>Processing may take several minutes. Public information is not guaranteed for every business.</p>
-            </div>
-            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setShowBulkEnrichmentConfirmation(false)} className="btn-secondary">Cancel</button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => {
-                  setShowBulkEnrichmentConfirmation(false);
-                  void enrichSelected();
-                }}
-              >
-                <Sparkles className="h-4 w-4" />
-                Start enrichment
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

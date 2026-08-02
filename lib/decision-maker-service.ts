@@ -6,9 +6,6 @@ import { decisionMakerMigrationMissing } from "@/lib/decision-maker-db";
 import { isUsableDecisionMakerCandidate } from "@/lib/decision-maker-validation";
 import { getSupabaseServiceClient } from "@/lib/db";
 import { researchDecisionMakers } from "@/lib/decision-maker-research";
-import type { PublicWebResearchContext } from "@/lib/public-web";
-import { acquireWorkloadLease, startCooldown } from "@/lib/workload-guards";
-import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 import type { User } from "@supabase/supabase-js";
 import type { DecisionMaker, Lead } from "@/lib/types";
 
@@ -75,10 +72,10 @@ function researchStatus(
   return "not_found" as const;
 }
 
-async function researchLeadDecisionMakersUnlocked(
+export async function researchLeadDecisionMakers(
   user: Pick<User, "id" | "email">,
   leadId: string,
-  options: { force?: boolean; context?: PublicWebResearchContext; bypassFreshness?: boolean } = {},
+  options: { force?: boolean } = {},
 ) {
   const lead = await loadLead(user, leadId);
   const existingCandidates = await loadCandidates(user, leadId);
@@ -86,18 +83,11 @@ async function researchLeadDecisionMakersUnlocked(
     isUsableDecisionMakerCandidate(candidate, lead.company_name),
   );
 
-  if (!options.force && !options.bypassFreshness && isRecent(lead.decision_maker_last_checked_at)) {
+  if (!options.force && isRecent(lead.decision_maker_last_checked_at)) {
     return {
       lead: { ...lead, decision_makers: usableExistingCandidates },
       candidates: usableExistingCandidates,
       cached: true,
-      metrics: {
-        websiteRequests: 0,
-        websitePagesFetched: 0,
-        publicSearchRequests: 0,
-        invalidCandidatesRejected: Math.max(0, existingCandidates.length - usableExistingCandidates.length),
-        cacheHits: 1,
-      },
       warnings: [],
       message: usableExistingCandidates.length
         ? "Recent decision-maker research is already available."
@@ -105,7 +95,7 @@ async function researchLeadDecisionMakersUnlocked(
     };
   }
 
-  const result = await researchDecisionMakers(lead, options.context);
+  const result = await researchDecisionMakers(lead);
   const now = new Date().toISOString();
   const supabase = getSupabaseServiceClient();
   const preserved = existingCandidates.filter(
@@ -165,9 +155,6 @@ async function researchLeadDecisionMakersUnlocked(
     (left, right) => Number(right.is_primary) - Number(left.is_primary),
   );
   const status = researchStatus(candidates, result);
-  const currentMetadata = lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
-    ? lead.raw_metadata
-    : {};
   const { data: updatedLead, error: leadUpdateError } = await supabase
     .from("leads")
     .update({
@@ -178,11 +165,6 @@ async function researchLeadDecisionMakersUnlocked(
       public_whatsapp_number: result.whatsapp.number ?? null,
       public_whatsapp_source_url: result.whatsapp.sourceUrl ?? null,
       public_whatsapp_last_checked_at: now,
-      raw_metadata: {
-        ...currentMetadata,
-        ...(result.publicPhones.length ? { public_website_phones: result.publicPhones } : {}),
-        ...(result.socialLinks.length ? { public_social_links: result.socialLinks } : {}),
-      },
     })
     .eq("id", leadId)
     .in("user_id", getAllowedUserIds(user))
@@ -205,41 +187,7 @@ async function researchLeadDecisionMakersUnlocked(
     lead: { ...(updatedLead as Lead), decision_makers: candidates },
     candidates,
     cached: false,
-    metrics: { ...result.metrics, cacheHits: 0 },
     warnings: result.warnings,
     message,
   };
-}
-
-export async function researchLeadDecisionMakers(
-  user: Pick<User, "id" | "email">,
-  leadId: string,
-  options: { force?: boolean; context?: PublicWebResearchContext; bypassFreshness?: boolean } = {},
-) {
-  const lease = await acquireWorkloadLease(
-    `decision-maker:active:${user.id}:${leadId}`,
-    WORKLOAD_LIMITS.completeEnrichment.activeLockSeconds,
-  );
-  if (!lease) {
-    throw new PublicApiError("This lead is already being researched.", 409, "DUPLICATE_ACTIVE_RUN");
-  }
-
-  try {
-    if (
-      options.force &&
-      !(await startCooldown(
-        `decision-maker:force:${user.id}:${leadId}`,
-        WORKLOAD_LIMITS.completeEnrichment.forceRefreshCooldownSeconds,
-      ))
-    ) {
-      throw new PublicApiError(
-        "Please wait before refreshing this lead again.",
-        429,
-        "ENRICHMENT_REFRESH_COOLDOWN",
-      );
-    }
-    return await researchLeadDecisionMakersUnlocked(user, leadId, options);
-  } finally {
-    await lease.release();
-  }
 }

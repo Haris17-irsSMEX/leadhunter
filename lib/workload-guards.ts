@@ -5,12 +5,10 @@ import { redis } from "@/lib/redis";
 export type WorkloadLease = { release: () => Promise<void> };
 
 const memoryLocks = new Map<string, { token: string; expiresAt: number }>();
-const memoryCooldowns = new Map<string, number>();
 
 function prune() {
   const now = Date.now();
   for (const [key, value] of memoryLocks) if (value.expiresAt <= now) memoryLocks.delete(key);
-  for (const [key, expiresAt] of memoryCooldowns) if (expiresAt <= now) memoryCooldowns.delete(key);
 }
 
 export async function acquireWorkloadLease(key: string, ttlSeconds: number): Promise<WorkloadLease | null> {
@@ -44,30 +42,4 @@ export async function acquireWorkloadLease(key: string, ttlSeconds: number): Pro
       if (memoryLocks.get(key)?.token === token) memoryLocks.delete(key);
     },
   };
-}
-
-export async function acquireWorkloadSlot(prefix: string, slots: number, ttlSeconds: number): Promise<WorkloadLease | null> {
-  const boundedSlots = Math.min(Math.max(Math.floor(slots), 1), 20);
-  for (let index = 0; index < boundedSlots; index += 1) {
-    const lease = await acquireWorkloadLease(`${prefix}:${index}`, ttlSeconds);
-    if (lease) return lease;
-  }
-  return null;
-}
-
-export async function startCooldown(key: string, ttlSeconds: number) {
-  const boundedTtl = Math.min(Math.max(Math.floor(ttlSeconds), 5), 24 * 60 * 60);
-  if (redis) {
-    const redisClient = redis;
-    try {
-      return Boolean(await redisClient.set(key, "1", { nx: true, ex: boundedTtl }));
-    } catch {
-      // Fall through to the in-process cooldown when Redis is unavailable.
-    }
-  }
-
-  prune();
-  if ((memoryCooldowns.get(key) ?? 0) > Date.now()) return false;
-  memoryCooldowns.set(key, Date.now() + boundedTtl * 1_000);
-  return true;
 }

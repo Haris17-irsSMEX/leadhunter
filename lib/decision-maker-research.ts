@@ -8,25 +8,16 @@ import {
 import { isSafePublicEmail } from "@/lib/email-safety";
 import { isAgencyLead, isRestaurantLead } from "@/lib/lead-kind";
 import { classifyPublicEmail } from "@/lib/outreach-intelligence";
-import {
-  fetchPublicWebPage,
-  normalizePublicWebsiteUrl,
-  sameRegistrableHost,
-  type PublicWebResearchContext,
-} from "@/lib/public-web";
+import { fetchPublicWebPage, normalizePublicWebsiteUrl, sameRegistrableHost } from "@/lib/public-web";
 import type {
   DecisionMaker,
   DecisionMakerConfidence,
   Lead,
   WhatsAppStatus,
 } from "@/lib/types";
-import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
-import { extractStructuredPublicData } from "@/lib/structured-data";
 
 type Candidate = Omit<DecisionMaker, "id" | "user_id" | "lead_id" | "created_at" | "updated_at">;
 type SearchItem = { title?: string; link?: string; snippet?: string };
-type PublicEvidence = { value: string; sourceUrl: string; confidence: "high" | "medium" };
-type PublicSocialEvidence = PublicEvidence & { platform: "linkedin" | "facebook" | "instagram" | "x" | "youtube" };
 
 export type DecisionMakerResearchResult = {
   candidates: Candidate[];
@@ -40,16 +31,9 @@ export type DecisionMakerResearchResult = {
     number?: string;
     sourceUrl?: string;
   };
-  publicPhones: PublicEvidence[];
-  socialLinks: PublicSocialEvidence[];
-  metrics: {
-    websiteRequests: number;
-    websitePagesFetched: number;
-    publicSearchRequests: number;
-    invalidCandidatesRejected: number;
-  };
 };
 
+const MAX_WEBSITE_PAGES = 8;
 const RESEARCH_PATHS = [
   "/about",
   "/about-us",
@@ -74,7 +58,6 @@ const ROLE_LINK_PATTERN =
 const LINKEDIN_PROFILE_PATTERN = /^https?:\/\/(?:[\w-]+\.)?linkedin\.com\/in\//i;
 const WHATSAPP_URL_PATTERN = /^https?:\/\/(?:wa\.me|api\.whatsapp\.com)\//i;
 const WHATSAPP_SCHEME_PATTERN = /^whatsapp:\/\//i;
-const TEL_SCHEME_PATTERN = /^tel:/i;
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const GENERIC_COMPANY_TOKENS = new Set([
   "agency",
@@ -211,26 +194,66 @@ function visibleCandidates(html: string, sourceUrl: string, companyName: string)
 }
 
 function structuredCandidates(html: string, sourceUrl: string, companyName: string): Candidate[] {
-  return extractStructuredPublicData(html, sourceUrl).people.flatMap((person): Candidate[] => {
-    const name = cleanValue(person.name);
-    const role = cleanValue(person.role);
-    if (!name || !role || !isLikelyHumanName(name, companyName) || !isLikelyDecisionMakerRole(role)) return [];
-    const email = cleanValue(person.email)?.replace(/^mailto:/i, "");
-    const profile = person.profileUrl && LINKEDIN_PROFILE_PATTERN.test(person.profileUrl) ? person.profileUrl : undefined;
-    return [{
-      name,
-      role,
-      public_work_email: email && isSafePublicEmail(email) ? email : undefined,
-      email_type: email && isSafePublicEmail(email) ? classifyPublicEmail(email, name) : undefined,
-      public_profile_url: profile,
-      source_url: sourceUrl,
-      source_type: "structured_data",
-      confidence: "high",
-      verification_status: "unverified",
-      is_primary: false,
-      last_checked_at: new Date().toISOString(),
-    }];
-  });
+  const candidates: Candidate[] = [];
+
+  for (const match of html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const parsed = JSON.parse(decodeHtml(match[1] ?? "")) as unknown;
+      const queue = Array.isArray(parsed) ? [...parsed] : [parsed];
+
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || typeof current !== "object") continue;
+        if (Array.isArray(current)) {
+          queue.push(...current);
+          continue;
+        }
+
+        const record = current as Record<string, unknown>;
+        const type = Array.isArray(record["@type"]) ? record["@type"] : [record["@type"]];
+        const isPerson = type.some((value) => typeof value === "string" && value.toLowerCase() === "person");
+
+        if (isPerson) {
+          const name = cleanValue(record.name);
+          const role = cleanValue(record.jobTitle) ?? cleanValue(record.role);
+          if (
+            name &&
+            role &&
+            isLikelyHumanName(name, companyName) &&
+            isLikelyDecisionMakerRole(role)
+          ) {
+            const email = cleanValue(record.email)?.replace(/^mailto:/i, "");
+            const sameAs = Array.isArray(record.sameAs) ? record.sameAs : [record.sameAs, record.url];
+            const profile = sameAs
+              .map(cleanValue)
+              .find((value): value is string => Boolean(value && LINKEDIN_PROFILE_PATTERN.test(value)));
+
+            candidates.push({
+              name,
+              role,
+              public_work_email: email && isSafePublicEmail(email) ? email : undefined,
+              email_type: email && isSafePublicEmail(email) ? classifyPublicEmail(email, name) : undefined,
+              public_profile_url: profile,
+              source_url: sourceUrl,
+              source_type: "structured_data",
+              confidence: "high",
+              verification_status: "unverified",
+              is_primary: false,
+              last_checked_at: new Date().toISOString(),
+            });
+          }
+        }
+
+        for (const value of Object.values(record)) {
+          if (value && typeof value === "object") queue.push(value);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return candidates;
 }
 
 function discoverResearchLinks(baseUrl: URL, html: string) {
@@ -273,48 +296,6 @@ function whatsappEvidence(html: string, sourceUrl: string) {
     }
   }
   return undefined;
-}
-
-function socialPlatform(value: string): PublicSocialEvidence["platform"] | null {
-  try {
-    const hostname = new URL(value).hostname.toLowerCase().replace(/^www\./, "");
-    if (hostname === "linkedin.com" || hostname.endsWith(".linkedin.com")) return "linkedin";
-    if (hostname === "facebook.com" || hostname.endsWith(".facebook.com")) return "facebook";
-    if (hostname === "instagram.com" || hostname.endsWith(".instagram.com")) return "instagram";
-    if (hostname === "x.com" || hostname === "twitter.com" || hostname.endsWith(".twitter.com")) return "x";
-    if (hostname === "youtube.com" || hostname.endsWith(".youtube.com") || hostname === "youtu.be") return "youtube";
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function publicPageEvidence(html: string, sourceUrl: string) {
-  const structured = extractStructuredPublicData(html, sourceUrl);
-  const publicPhones: PublicEvidence[] = structured.phones.map((value) => ({ value, sourceUrl, confidence: "high" }));
-  const socialLinks: PublicSocialEvidence[] = structured.socialUrls.flatMap((value) => {
-    const platform = socialPlatform(value);
-    return platform ? [{ platform, value, sourceUrl, confidence: "high" as const }] : [];
-  });
-
-  for (const match of decodeHtml(html).matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi)) {
-    const href = match[1]?.trim();
-    if (!href) continue;
-    if (TEL_SCHEME_PATTERN.test(href)) {
-      const value = href.replace(TEL_SCHEME_PATTERN, "").replace(/[^+\d() .-]/g, "").trim();
-      if (value) publicPhones.push({ value, sourceUrl, confidence: "high" });
-      continue;
-    }
-    try {
-      const value = new URL(href, sourceUrl).toString();
-      const platform = socialPlatform(value);
-      if (platform) socialLinks.push({ platform, value, sourceUrl, confidence: "high" });
-    } catch {
-      continue;
-    }
-  }
-
-  return { publicPhones, socialLinks };
 }
 
 function publicSearchConfig() {
@@ -407,44 +388,33 @@ function dedupeAndRank(lead: Lead, candidates: Candidate[]) {
   return [...unique.values()].slice(0, 10).map((candidate, index) => ({ ...candidate, is_primary: index === 0 }));
 }
 
-export async function researchDecisionMakers(
-  lead: Lead,
-  context?: PublicWebResearchContext,
-): Promise<DecisionMakerResearchResult> {
+export async function researchDecisionMakers(lead: Lead): Promise<DecisionMakerResearchResult> {
   const baseUrl = normalizePublicWebsiteUrl(lead.website);
   const warnings: string[] = [];
   const researchedUrls: string[] = [];
   const candidates: Candidate[] = [];
   let websiteAvailable = false;
   let whatsapp: DecisionMakerResearchResult["whatsapp"] = { status: "not_checked" };
-  let websiteRequests = 0;
-  let publicSearchRequests = 0;
-  const publicPhones: PublicEvidence[] = [];
-  const socialLinks: PublicSocialEvidence[] = [];
 
   if (baseUrl) {
     const fixedUrls = RESEARCH_PATHS.map((path) => new URL(path, baseUrl).toString());
     const targets = [baseUrl.toString(), ...fixedUrls];
 
-    for (let index = 0; index < targets.length && index < WORKLOAD_LIMITS.completeEnrichment.maxPagesPerLead; index += 1) {
+    for (let index = 0; index < targets.length && index < MAX_WEBSITE_PAGES; index += 1) {
       const target = targets[index];
       try {
-        websiteRequests += 1;
         const page = await fetchPublicWebPage(target, {
-          timeoutMs: WORKLOAD_LIMITS.websiteResearch.requestTimeoutMs,
-          maxBytes: WORKLOAD_LIMITS.websiteResearch.maxResponseBytes,
-          maxRedirects: WORKLOAD_LIMITS.websiteResearch.maxRedirects,
-          userAgent: "LeadHunter/1.0 CompletePublicResearch",
-        }, context);
+          timeoutMs: 8_000,
+          maxBytes: 350_000,
+          maxRedirects: 3,
+          userAgent: "LeadHunter/1.0 DecisionMakerResearch",
+        });
         websiteAvailable = true;
         researchedUrls.push(page.url);
         candidates.push(
           ...structuredCandidates(page.html, page.url, lead.company_name),
           ...visibleCandidates(page.html, page.url, lead.company_name),
         );
-        const evidence = publicPageEvidence(page.html, page.url);
-        publicPhones.push(...evidence.publicPhones);
-        socialLinks.push(...evidence.socialLinks);
         whatsapp = whatsapp.status === "not_checked" ? whatsappEvidence(page.html, page.url) ?? whatsapp : whatsapp;
 
         if (index === 0) {
@@ -462,7 +432,6 @@ export async function researchDecisionMakers(
   if (serperKey) {
     try {
       searchAvailable = true;
-      publicSearchRequests += 1;
       const results = await serperSearch(`"${lead.company_name}" owner founder manager`, serperKey);
       candidates.push(...results.map((item) => searchCandidate(item, lead)).filter((item): item is Candidate => Boolean(item)));
     } catch {
@@ -474,25 +443,12 @@ export async function researchDecisionMakers(
     whatsapp = { status: "not_found" };
   }
 
-  const rankedCandidates = dedupeAndRank(lead, candidates);
-  const uniquePhones = [...new Map(publicPhones.map((item) => [item.value.replace(/\D/g, ""), item])).values()]
-    .filter((item) => item.value.replace(/\D/g, "").length >= 7)
-    .slice(0, 5);
-  const uniqueSocialLinks = [...new Map(socialLinks.map((item) => [`${item.platform}:${item.value}`, item])).values()].slice(0, 12);
   return {
-    candidates: rankedCandidates,
+    candidates: dedupeAndRank(lead, candidates),
     researchedUrls,
     warnings,
     websiteAvailable,
     searchAvailable,
     whatsapp,
-    publicPhones: uniquePhones,
-    socialLinks: uniqueSocialLinks,
-    metrics: {
-      websiteRequests,
-      websitePagesFetched: researchedUrls.length,
-      publicSearchRequests,
-      invalidCandidatesRejected: Math.max(0, candidates.length - rankedCandidates.length),
-    },
   };
 }

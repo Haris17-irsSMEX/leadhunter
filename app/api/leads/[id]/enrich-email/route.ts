@@ -1,13 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import { apiErrorResponse, PublicApiError } from "@/lib/api-errors";
+import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { getSupabaseServiceClient } from "@/lib/db";
-import { enrichLeadPublicEmail } from "@/lib/public-email-service";
+import { cleanSafePublicEmail } from "@/lib/email-safety";
+import { classifyPublicEmail } from "@/lib/outreach-intelligence";
+import { findPublicBusinessEmail } from "@/lib/restaurant-email";
 import type { Lead } from "@/lib/types";
-import { acquireWorkloadLease } from "@/lib/workload-guards";
-import { WORKLOAD_LIMITS } from "@/lib/workload-limits";
 
 export const runtime = "nodejs";
+
+function mergeRawMetadata(lead: Lead, contactPageUrl?: string, status?: string, email?: string | null) {
+  const existing =
+    lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
+      ? lead.raw_metadata
+      : {};
+
+  return {
+    ...existing,
+    contact_enrichment: {
+      ...(typeof existing.contact_enrichment === "object" && existing.contact_enrichment ? existing.contact_enrichment : {}),
+      status,
+      contact_page_url: contactPageUrl,
+      email_type: classifyPublicEmail(email),
+      research_source: "manual",
+      checked_at: new Date().toISOString(),
+    },
+  };
+}
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -41,32 +60,49 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: "This lead has no website to scan." }, { status: 400 });
     }
 
-    const lease = await acquireWorkloadLease(
-      `complete-enrichment:active:${user.id}:${id}`,
-      WORKLOAD_LIMITS.completeEnrichment.activeLockSeconds,
-    );
-    if (!lease) {
-      throw new PublicApiError("This lead is already being enriched.", 409, "DUPLICATE_ACTIVE_RUN");
+    const emailResult = await findPublicBusinessEmail(currentLead.website);
+    const safeEmail = cleanSafePublicEmail(emailResult.email);
+    const currentEmailIsFake = Boolean(currentLead.email && !cleanSafePublicEmail(currentLead.email));
+    const updatePayload: Record<string, unknown> = {
+      raw_metadata: mergeRawMetadata(currentLead, emailResult.contactPageUrl, safeEmail ? "completed" : emailResult.status, safeEmail),
+    };
+
+    if (safeEmail) {
+      updatePayload.email = safeEmail;
+      updatePayload.email_source_url = emailResult.sourceUrl;
+      updatePayload.email_confidence = emailResult.confidence;
+    } else if (currentEmailIsFake) {
+      updatePayload.email = null;
     }
 
-    try {
-      const enrichment = await enrichLeadPublicEmail(user, currentLead);
-      const emailResult = enrichment.result;
+    const { data: updatedLead, error: updateError } = await supabase
+      .from("leads")
+      .update(updatePayload)
+      .eq("id", id)
+      .in("user_id", allowedUserIds)
+      .select("*")
+      .single();
 
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+
+    if (emailResult.status === "error") {
       return NextResponse.json({
-        ...enrichment.lead,
-        success: emailResult.status === "found",
-        message: enrichment.emailAlreadyExisted
-          ? "This lead already has a public email."
-          : emailResult.status === "found"
-            ? "Email found and saved."
-            : "No public email found. Try the website contact form or phone.",
+        ...(updatedLead as Lead),
+        success: false,
+        error: "Email research failed. Please try again.",
+        message: "Email research failed. Please try again.",
         contactPageUrl: emailResult.contactPageUrl,
-        cached: emailResult.cached === true,
-      });
-    } finally {
-      await lease.release();
+      }, { status: 502 });
     }
+
+    return NextResponse.json({
+      ...(updatedLead as Lead),
+      success: Boolean(safeEmail),
+      message: safeEmail ? "Email found and saved." : "No public email found. Try the website contact form or phone.",
+      contactPageUrl: emailResult.contactPageUrl,
+    });
   } catch (error) {
     return apiErrorResponse(error, "Email enrichment is temporarily unavailable. Please try again later.");
   }

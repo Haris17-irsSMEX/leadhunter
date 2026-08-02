@@ -30,7 +30,6 @@ import {
   WORKLOAD_LIMITS,
 } from "@/lib/workload-limits";
 
-export type CityScanEnrichmentMode = "basic" | "complete";
 export type CityScanStatus = "processing" | "complete" | "partial" | "cancelled" | "failed";
 
 type CityScanTask = {
@@ -78,7 +77,6 @@ export type CityScanState = {
   city: ResolvedGoogleCity;
   categoryGroupIds: CityScanCategoryGroupId[];
   requestedOpportunities: number;
-  enrichmentMode: CityScanEnrichmentMode;
   tasks: CityScanTask[];
   resultLeadIds: string[];
   resultStatuses: Record<string, Lead["scrape_status"]>;
@@ -97,7 +95,6 @@ export type CityScanPublicResult = {
   status: CityScanStatus;
   city: Pick<ResolvedGoogleCity, "name" | "label" | "country">;
   requested: number;
-  enrichmentMode: CityScanEnrichmentMode;
   coverage: CityScanCoverage;
   leads: Lead[];
   warnings: string[];
@@ -154,7 +151,6 @@ async function loadState(id: string) {
     zones: state.coverage.zonesPlanned,
     categorySearches: state.tasks.length,
     requestedOpportunities: state.requestedOpportunities,
-    completeEnrichment: state.enrichmentMode === "complete",
   });
   return state;
 }
@@ -381,7 +377,6 @@ async function publicResult(state: CityScanState): Promise<CityScanPublicResult>
     status: state.status,
     city: { name: state.city.name, label: state.city.label, country: state.city.country },
     requested: state.requestedOpportunities,
-    enrichmentMode: state.enrichmentMode,
     coverage: state.coverage,
     leads: await fetchLeadsForState(state, state.userId),
     warnings: state.warnings,
@@ -463,7 +458,6 @@ export async function startCityOpportunityScan(
     cityPlaceId?: string;
     categoryGroupIds: CityScanCategoryGroupId[];
     requestedOpportunities: number;
-    enrichmentMode: CityScanEnrichmentMode;
   },
 ) {
   const cityInput = input.city.trim();
@@ -548,7 +542,6 @@ export async function startCityOpportunityScan(
       zones: usableZones.length,
       categorySearches: tasks.length,
       requestedOpportunities: requested,
-      completeEnrichment: input.enrichmentMode === "complete",
     });
     const now = new Date().toISOString();
     const state: CityScanState = {
@@ -558,7 +551,6 @@ export async function startCityOpportunityScan(
       city,
       categoryGroupIds: input.categoryGroupIds,
       requestedOpportunities: Math.min(requested, WORKLOAD_LIMITS.cityScan.maxRequestedOpportunities),
-      enrichmentMode: input.enrichmentMode,
       tasks,
       resultLeadIds: [],
       resultStatuses: {},
