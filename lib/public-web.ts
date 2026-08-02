@@ -16,6 +16,37 @@ export type PublicWebFetchOptions = {
   userAgent?: string;
 };
 
+export type PublicWebErrorCode =
+  | "invalid_website"
+  | "dns_failure"
+  | "tls_failure"
+  | "website_timeout"
+  | "website_blocked"
+  | "website_unavailable"
+  | "redirect_failure"
+  | "unsupported_content"
+  | "response_too_large"
+  | "unknown_error";
+
+export class PublicWebFetchError extends Error {
+  readonly code: PublicWebErrorCode;
+  readonly status?: number;
+  readonly url?: string;
+
+  constructor(
+    code: PublicWebErrorCode,
+    message: string,
+    status?: number,
+    url?: string,
+  ) {
+    super(message);
+    this.name = "PublicWebFetchError";
+    this.code = code;
+    this.status = status;
+    this.url = url;
+  }
+}
+
 const BLOCKED_HOSTNAMES = new Set([
   "localhost",
   "localhost.localdomain",
@@ -76,6 +107,54 @@ function isPrivateAddress(address: string) {
   return true;
 }
 
+function errorCode(error: unknown) {
+  if (!error || typeof error !== "object") return "";
+  const directCode = "code" in error && typeof error.code === "string" ? error.code : "";
+  const cause = "cause" in error && error.cause && typeof error.cause === "object" ? error.cause : null;
+  const causeCode = cause && "code" in cause && typeof cause.code === "string" ? cause.code : "";
+  return directCode || causeCode;
+}
+
+function classifyNetworkError(error: unknown, url: URL) {
+  if (error instanceof PublicWebFetchError) return error;
+
+  const name = error instanceof Error ? error.name : "";
+  const code = errorCode(error);
+  if (name === "TimeoutError" || name === "AbortError" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "ETIMEDOUT") {
+    return new PublicWebFetchError("website_timeout", "The public website did not respond in time.", undefined, url.toString());
+  }
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "ENODATA") {
+    return new PublicWebFetchError("dns_failure", "The public website hostname could not be resolved.", undefined, url.toString());
+  }
+  if (/CERT|TLS|SSL|ERR_TLS|UNABLE_TO_VERIFY/i.test(code)) {
+    return new PublicWebFetchError("tls_failure", "The public website could not establish a secure connection.", undefined, url.toString());
+  }
+  if (["ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_SOCKET"].includes(code)) {
+    return new PublicWebFetchError("website_unavailable", "The public website could not be reached.", undefined, url.toString());
+  }
+  if (/^Z_|DECOMPRESS|CONTENT_DECODING/i.test(code)) {
+    return new PublicWebFetchError("unsupported_content", "The public website returned unreadable content.", undefined, url.toString());
+  }
+
+  return new PublicWebFetchError("unknown_error", "The public website request failed.", undefined, url.toString());
+}
+
+async function lookupPublicHostname(hostname: string, url: URL) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      lookup(hostname, { all: true, verbatim: true }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new PublicWebFetchError("website_timeout", "The public website hostname lookup timed out.", undefined, url.toString()));
+        }, 5_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 export function normalizePublicWebsiteUrl(value?: string | null) {
   const trimmed = value?.trim();
   if (!trimmed) return null;
@@ -104,10 +183,10 @@ export function sameRegistrableHost(left: URL | string, right: URL | string) {
 
 async function assertPublicDestination(url: URL) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("Only public HTTP and HTTPS pages can be researched.");
+    throw new PublicWebFetchError("invalid_website", "Only public HTTP and HTTPS pages can be researched.", undefined, url.toString());
   }
   if (url.username || url.password) {
-    throw new Error("Credential-bearing URLs are not allowed.");
+    throw new PublicWebFetchError("invalid_website", "Credential-bearing URLs are not allowed.", undefined, url.toString());
   }
 
   const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
@@ -118,26 +197,31 @@ async function assertPublicDestination(url: URL) {
     hostname.endsWith(".local") ||
     hostname.endsWith(".internal")
   ) {
-    throw new Error("Private network destinations are not allowed.");
+    throw new PublicWebFetchError("invalid_website", "Private network destinations are not allowed.", undefined, url.toString());
   }
 
   if (isIP(hostname)) {
     if (isPrivateAddress(hostname)) {
-      throw new Error("Private network destinations are not allowed.");
+      throw new PublicWebFetchError("invalid_website", "Private network destinations are not allowed.", undefined, url.toString());
     }
     return;
   }
 
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
+  let addresses: Array<{ address: string; family: number }>;
+  try {
+    addresses = await lookupPublicHostname(hostname, url);
+  } catch (error) {
+    throw classifyNetworkError(error, url);
+  }
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
-    throw new Error("Private network destinations are not allowed.");
+    throw new PublicWebFetchError("invalid_website", "Private network destinations are not allowed.", undefined, url.toString());
   }
 }
 
 async function readBodyWithLimit(response: Response, maxBytes: number) {
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-    throw new Error("Public page is too large to research safely.");
+    throw new PublicWebFetchError("response_too_large", "The public page is too large to research safely.", response.status, response.url);
   }
 
   if (!response.body) return "";
@@ -155,7 +239,7 @@ async function readBodyWithLimit(response: Response, maxBytes: number) {
       size += value.byteLength;
       if (size > maxBytes) {
         await reader.cancel();
-        throw new Error("Public page is too large to research safely.");
+        throw new PublicWebFetchError("response_too_large", "The public page is too large to research safely.", response.status, response.url);
       }
       chunks.push(value);
     }
@@ -183,46 +267,62 @@ export async function fetchPublicWebPage(
   let current = input instanceof URL ? new URL(input) : normalizePublicWebsiteUrl(input);
 
   if (!current) {
-    throw new Error("A valid public website URL is required.");
+    throw new PublicWebFetchError("invalid_website", "A valid public website URL is required.");
   }
 
   for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
     await assertPublicDestination(current);
 
-    const response: Response = await fetch(current, {
-      method: "GET",
-      redirect: "manual",
-      headers: {
-        Accept: "text/html, text/plain;q=0.9",
-        "User-Agent": userAgent,
-      },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(current, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          Accept: "text/html, text/plain;q=0.9",
+          "User-Agent": userAgent,
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      throw classifyNetworkError(error, current);
+    }
 
     if (response.status >= 300 && response.status < 400) {
       const location: string | null = response.headers.get("location");
       if (!location || redirectCount === maxRedirects) {
-        throw new Error("Public page redirected too many times.");
+        throw new PublicWebFetchError("redirect_failure", "The public page could not complete its redirect.", response.status, current.toString());
       }
-      current = new URL(location, current);
+      try {
+        current = new URL(location, current);
+      } catch {
+        throw new PublicWebFetchError("redirect_failure", "The public page returned an invalid redirect.", response.status, current.toString());
+      }
       continue;
     }
 
     if (!response.ok) {
-      throw new Error(`Public page request failed with status ${response.status}.`);
+      const code = response.status === 401 || response.status === 403 || response.status === 429
+        ? "website_blocked"
+        : "website_unavailable";
+      throw new PublicWebFetchError(code, "The public page request was not accepted.", response.status, current.toString());
     }
 
     const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
     if (contentType && !contentType.includes("text/html") && !contentType.includes("text/plain")) {
-      throw new Error("Public page did not return HTML content.");
+      throw new PublicWebFetchError("unsupported_content", "The public page did not return supported text content.", response.status, current.toString());
     }
 
-    return {
-      url: current.toString(),
-      html: await readBodyWithLimit(response, maxBytes),
-      contentType,
-    };
+    try {
+      return {
+        url: current.toString(),
+        html: await readBodyWithLimit(response, maxBytes),
+        contentType,
+      };
+    } catch (error) {
+      throw classifyNetworkError(error, current);
+    }
   }
 
-  throw new Error("Public page redirected too many times.");
+  throw new PublicWebFetchError("redirect_failure", "The public page redirected too many times.", undefined, current.toString());
 }

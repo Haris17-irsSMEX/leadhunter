@@ -767,7 +767,7 @@ function ProfessionalLeadRow({
                 className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                {isEnriching ? "Searching…" : "Find email"}
+                {isEnriching ? "Finding email…" : "Find email"}
               </button>
             ) : pageUrl ? (
               <a
@@ -903,9 +903,9 @@ function ProfessionalLeadRow({
                         {emailResearchStatus === "error"
                           ? "Email research failed — retry."
                           : emailResearchStatus === "not_found"
-                            ? "No public email found."
+                            ? "No public email found. Use the contact page or phone outreach."
                             : "Public email has not been researched yet."}
-                        {emailResearchStatus !== "error" && (pageUrl || lead.phone) ? " Use the contact page or phone outreach." : null}
+                        {emailResearchStatus === "not_researched" && (pageUrl || lead.phone) ? " Use the contact page or phone outreach." : null}
                       </div>
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -914,7 +914,7 @@ function ProfessionalLeadRow({
                       {!safeEmail && canFindEmail ? (
                         <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60">
                           {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                          {isEnriching ? "Searching…" : "Find email"}
+                          {isEnriching ? "Finding email…" : "Find email"}
                         </button>
                       ) : null}
                       {safeEmail ? (
@@ -1607,9 +1607,7 @@ export default function LeadsTable() {
           response,
           payload.error ?? payload.message ?? "Email search could not be completed. Please try again.",
         );
-        throw new EmailSearchResponseError(
-          response.status >= 500 ? "Email search could not be completed. Please try again." : apiMessage,
-        );
+        throw new EmailSearchResponseError(apiMessage);
       }
 
       const feedback = emailSearchFeedback(previousLead, payload);
