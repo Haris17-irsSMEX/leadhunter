@@ -687,29 +687,38 @@ function ProfessionalLeadRow({
 
   return (
     <>
-      <tr className="cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]" onClick={onToggleExpand}>
-        <td className="w-[40px] px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
+      <tr className="border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]">
+        <td className="w-[40px] px-4 py-5 align-top">
           <input
             type="checkbox"
             checked={isSelected}
             onChange={(event) => onToggleSelect(event.target.checked)}
             className="app-checkbox"
+            aria-label={`Select ${lead.company_name}`}
           />
         </td>
         <td className="px-4 py-5 align-top">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</p>
-            <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
-              {sourceLabel(lead.source)}
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            aria-expanded={isExpanded}
+            aria-label={`Open ${lead.company_name} details`}
+            className="-m-2 block w-[calc(100%+1rem)] cursor-pointer rounded-xl p-2 text-left transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+          >
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
+              <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
+                {sourceLabel(lead.source)}
+              </span>
             </span>
-          </div>
-          <p className={lead.website ? "mt-2 text-xs text-[var(--text-secondary)]" : "mt-2 text-xs text-[var(--text-muted)]"}>{websiteLabel}</p>
-          {industry.visible ? (
-            <p className="mt-2 max-w-[360px] truncate text-xs text-[var(--text-muted)]">
-              {industry.visible}
-              {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
-            </p>
-          ) : null}
+            <span className={lead.website ? "mt-2 block text-xs text-[var(--text-secondary)]" : "mt-2 block text-xs text-[var(--text-muted)]"}>{websiteLabel}</span>
+            {industry.visible ? (
+              <span className="mt-2 block max-w-[360px] truncate text-xs text-[var(--text-muted)]">
+                {industry.visible}
+                {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
+              </span>
+            ) : null}
+          </button>
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-1 text-sm">
@@ -749,13 +758,10 @@ function ProfessionalLeadRow({
           </div>
         </td>
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
-        <td className="px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
-          <div className="flex items-center justify-end gap-2">
-            <button type="button" onClick={onToggleExpand} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
-              Open
-            </button>
+        <td className="px-4 py-5 align-top">
+          <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap sm:flex-nowrap">
             {safeEmail ? (
-              <button type="button" onClick={onCopyEmail} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
+              <button type="button" onClick={onCopyEmail} className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs">
                 <Mail className="h-3.5 w-3.5" />
                 Email
               </button>
@@ -764,7 +770,7 @@ function ProfessionalLeadRow({
                 type="button"
                 disabled={isEnriching}
                 onClick={onEnrichEmail}
-                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                className="btn-secondary h-9 min-w-[108px] justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
                 {isEnriching ? "Finding email…" : "Find email"}
@@ -774,12 +780,12 @@ function ProfessionalLeadRow({
                 href={pageUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="btn-secondary h-9 whitespace-nowrap px-3 text-xs"
+                className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs"
               >
                 Contact
               </a>
             ) : lead.phone ? (
-              <button type="button" onClick={onCopyPhone} className="btn-secondary h-9 whitespace-nowrap px-3 text-xs">
+              <button type="button" onClick={onCopyPhone} className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs">
                 Phone
               </button>
             ) : null}
@@ -787,7 +793,7 @@ function ProfessionalLeadRow({
               type="button"
               disabled={isResearchingDecisionMaker}
               onClick={onResearchDecisionMaker}
-              className="btn-secondary h-9 whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-secondary h-9 min-w-[104px] justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
               {isResearchingDecisionMaker ? "Researching…" : "Research"}
