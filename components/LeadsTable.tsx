@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, Trash2, UserSearch, Users } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
@@ -16,7 +16,7 @@ import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
-import { getCategorySummary, getCleanCategoryLabels } from "@/lib/lead-category";
+import { getCleanCategoryLabels } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
 import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
@@ -62,6 +62,17 @@ type EmailSearchFeedback = {
   message: string;
   type: "success" | "info";
 };
+type BulkOperationType = "email" | "decision_maker";
+type BulkProgress = {
+  type: BulkOperationType;
+  total: number;
+  completed: number;
+  found: number;
+  notFound: number;
+  failed: number;
+  skipped: number;
+  stopped: boolean;
+};
 type DecisionMakerResearchPayload = {
   lead?: Lead;
   candidates?: DecisionMaker[];
@@ -79,6 +90,30 @@ type ManualDecisionMakerInput = {
 };
 
 class EmailSearchResponseError extends Error {}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+  shouldStop: () => boolean,
+) {
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (!shouldStop()) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+
+      if (item === undefined) {
+        return;
+      }
+
+      await worker(item);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, runWorker));
+}
 
 function emailSearchFeedback(previousLead: Lead | undefined, payload: EmailEnrichmentPayload): EmailSearchFeedback {
   const previousEmail = cleanSafePublicEmail(previousLead?.email);
@@ -199,6 +234,13 @@ function formatRelative(value?: string) {
   }
 
   const count = Math.floor(diff / day);
+  if (count === 1) {
+    return "Yesterday";
+  }
+  if (count > 7) {
+    return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  }
+
   return `${count} day${count === 1 ? "" : "s"} ago`;
 }
 
@@ -564,6 +606,21 @@ function needsEmailEnrichment(lead: Lead) {
   return Boolean(lead.id && lead.website?.trim() && !cleanSafePublicEmail(lead.email));
 }
 
+function isBulkEmailEligible(lead: Lead) {
+  return needsEmailEnrichment(lead);
+}
+
+function hasDecisionMakerCandidate(lead: Lead) {
+  return Boolean(
+    getPrimaryDecisionMaker(lead) ||
+      lead.decision_makers?.some((candidate) => candidate.verification_status !== "rejected"),
+  );
+}
+
+function isBulkDecisionMakerEligible(lead: Lead) {
+  return Boolean(lead.id && !hasDecisionMakerCandidate(lead));
+}
+
 function manualEmailResearchStatus(lead: Lead) {
   if (cleanSafePublicEmail(lead.email)) return "found" as const;
   const metadata = lead.raw_metadata && typeof lead.raw_metadata === "object" && !Array.isArray(lead.raw_metadata)
@@ -620,12 +677,13 @@ function DecisionMakerSummary({ lead }: { lead: Lead }) {
 
 function ProfessionalLeadRow({
   lead,
+  rowId,
   isExpanded,
   isSelected,
   onToggleExpand,
   onToggleSelect,
   onCopyEmail,
-  onCopyLead,
+  onCopyBusinessName,
   onCopyPhone,
   onCopyWebsite,
   onDelete,
@@ -638,17 +696,18 @@ function ProfessionalLeadRow({
   isResearchingDecisionMaker,
 }: {
   lead: Lead;
+  rowId: string;
   isExpanded: boolean;
   isSelected: boolean;
   onToggleExpand: () => void;
   onToggleSelect: (checked: boolean) => void;
   onCopyEmail: () => void;
-  onCopyLead: () => void;
+  onCopyBusinessName: () => void;
   onCopyPhone: () => void;
   onCopyWebsite: () => void;
   onDelete: () => void;
-  onEnrichEmail: () => void;
-  onResearchDecisionMaker: () => void;
+  onEnrichEmail: (forceRefresh?: boolean) => void;
+  onResearchDecisionMaker: (force?: boolean) => void;
   onUpdateDecisionMaker: (candidate: DecisionMaker, action: "verify" | "reject" | "primary" | "delete") => void;
   onAddDecisionMaker: (candidate: ManualDecisionMakerInput) => Promise<boolean>;
   onEditDecisionMaker: (candidateId: string, candidate: ManualDecisionMakerInput) => Promise<boolean>;
@@ -657,6 +716,9 @@ function ProfessionalLeadRow({
 }) {
   const [showManualCandidate, setShowManualCandidate] = useState(false);
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuContainerRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const [manualCandidate, setManualCandidate] = useState<ManualDecisionMakerInput>({
     name: "",
     role: "",
@@ -675,7 +737,16 @@ function ProfessionalLeadRow({
   const contactability = getContactabilityStatus(lead);
   const showDeliveryIntelligence = hasDeliverySignal(lead);
   const primaryDecisionMaker = getPrimaryDecisionMaker(lead);
+  const decisionMakerCandidateExists = hasDecisionMakerCandidate(lead);
   const outreach = getOutreachIntelligence(lead);
+  const domRowId = rowId.replace(/[^a-zA-Z0-9_-]/g, "-");
+  const detailsPanelId = `lead-details-${domRowId}`;
+  const emailActionLabel = safeEmail
+    ? "Refresh email research"
+    : emailResearchStatus === "error"
+      ? "Retry email research"
+      : "Find email";
+  const decisionMakerActionLabel = decisionMakerCandidateExists ? "Research decision-maker again" : "Find decision-maker";
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -684,6 +755,44 @@ function ProfessionalLeadRow({
     Boolean(lead.employee_count?.trim()) ||
     Boolean(lead.pricing_model?.trim()) ||
     Boolean(lead.tech_stack?.length);
+
+  useEffect(() => {
+    if (!isExpanded) {
+      setMenuOpen(false);
+    }
+  }, [isExpanded]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (!menuContainerRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
 
   return (
     <>
@@ -700,24 +809,35 @@ function ProfessionalLeadRow({
         <td className="px-4 py-5 align-top">
           <button
             type="button"
-            onClick={onToggleExpand}
+            onClick={() => {
+              closeMenu();
+              onToggleExpand();
+            }}
             aria-expanded={isExpanded}
-            aria-label={`Open ${lead.company_name} details`}
-            className="-m-2 block w-[calc(100%+1rem)] cursor-pointer rounded-xl p-2 text-left transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
+            aria-controls={detailsPanelId}
+            aria-label={`${isExpanded ? "Close" : "Open"} ${lead.company_name} details`}
+            className="-m-2 block min-h-[92px] w-[calc(100%+1rem)] cursor-pointer rounded-xl p-2 text-left transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
           >
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
-              <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
-                {sourceLabel(lead.source)}
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
+                  <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
+                    {sourceLabel(lead.source)}
+                  </span>
+                </span>
+                <span className={lead.website ? "mt-2 block truncate text-xs text-[var(--text-secondary)]" : "mt-2 block text-xs text-[var(--text-muted)]"}>{websiteLabel}</span>
+                {industry.visible ? (
+                  <span className="mt-2 block max-w-[360px] truncate text-xs text-[var(--text-muted)]">
+                    {industry.visible}
+                    {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
+                  </span>
+                ) : null}
+              </span>
+              <span className="mt-0.5 shrink-0 rounded-full border border-[var(--border-default)] bg-white p-1 text-[var(--text-muted)]">
+                {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </span>
             </span>
-            <span className={lead.website ? "mt-2 block text-xs text-[var(--text-secondary)]" : "mt-2 block text-xs text-[var(--text-muted)]"}>{websiteLabel}</span>
-            {industry.visible ? (
-              <span className="mt-2 block max-w-[360px] truncate text-xs text-[var(--text-muted)]">
-                {industry.visible}
-                {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
-              </span>
-            ) : null}
           </button>
         </td>
         <td className="px-4 py-5 align-top">
@@ -757,99 +877,72 @@ function ProfessionalLeadRow({
             </div>
           </div>
         </td>
-        <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">{formatRelative(lead.scraped_at)}</td>
-        <td className="px-4 py-5 align-top">
-          <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap sm:flex-nowrap">
-            {safeEmail ? (
-              <button type="button" onClick={onCopyEmail} className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs">
-                <Mail className="h-3.5 w-3.5" />
-                Email
-              </button>
-            ) : canFindEmail ? (
-              <button
-                type="button"
-                disabled={isEnriching}
-                onClick={onEnrichEmail}
-                className="btn-secondary h-9 min-w-[108px] justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
-                {isEnriching ? "Finding email…" : "Find email"}
-              </button>
-            ) : pageUrl ? (
-              <a
-                href={pageUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs"
-              >
-                Contact
-              </a>
-            ) : lead.phone ? (
-              <button type="button" onClick={onCopyPhone} className="btn-secondary h-9 min-w-[84px] justify-center whitespace-nowrap px-3 text-xs">
-                Phone
-              </button>
-            ) : null}
+        <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">
+          <span className="block w-[112px] whitespace-nowrap">{formatRelative(lead.scraped_at)}</span>
+        </td>
+        <td className="px-3 py-5 align-top">
+          <div ref={menuContainerRef} className="relative flex items-center justify-end">
             <button
               type="button"
-              disabled={isResearchingDecisionMaker}
-              onClick={onResearchDecisionMaker}
-              className="btn-secondary h-9 min-w-[104px] justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+              ref={menuButtonRef}
+              onClick={() => setMenuOpen((current) => !current)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-controls={`lead-actions-${domRowId}`}
+              aria-label={`More actions for ${lead.company_name}`}
+              className="icon-button h-9 w-9"
             >
-              {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
-              {isResearchingDecisionMaker ? "Researching…" : "Research"}
+              <MoreHorizontal className="h-4 w-4" />
             </button>
-            <details className="group relative">
-              <summary
-                className="icon-button h-9 w-9 cursor-pointer list-none"
-                aria-label={`More actions for ${lead.company_name}`}
-                title="More actions"
+            {menuOpen ? (
+              <div
+                id={`lead-actions-${domRowId}`}
+                role="menu"
+                className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-[var(--border-default)] bg-white p-1.5 text-left shadow-[var(--shadow-elevated)]"
               >
-                <MoreHorizontal className="h-4 w-4" />
-              </summary>
-              <div className="absolute right-0 z-30 mt-2 w-56 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]">
                 {lead.website ? (
-                  <a href={lead.website} target="_blank" rel="noopener noreferrer" className="block rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <a href={lead.website} target="_blank" rel="noopener noreferrer" role="menuitem" onClick={closeMenu} className="block rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Open website
                   </a>
                 ) : null}
-                <button type="button" onClick={onCopyLead} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
-                  Copy lead
+                <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyBusinessName(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  Copy business name
                 </button>
                 {lead.website ? (
-                  <button type="button" onClick={onCopyWebsite} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyWebsite(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy website
                   </button>
                 ) : null}
                 {lead.phone ? (
-                  <button type="button" onClick={onCopyPhone} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyPhone(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy phone
                   </button>
                 ) : null}
                 {safeEmail ? (
-                  <button type="button" onClick={onCopyEmail} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyEmail(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy email
                   </button>
                 ) : null}
-                {canFindEmail ? (
-                  <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
-                    Find email
+                {canFindEmail || safeEmail ? (
+                  <button type="button" role="menuitem" disabled={isEnriching || (!safeEmail && !canFindEmail)} onClick={() => { closeMenu(); onEnrichEmail(Boolean(safeEmail)); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                    {isEnriching ? "Finding email..." : emailActionLabel}
                   </button>
                 ) : null}
-                <button type="button" disabled={isResearchingDecisionMaker} onClick={onResearchDecisionMaker} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
-                  {isResearchingDecisionMaker ? "Researching…" : "Find decision-maker"}
+                <button type="button" role="menuitem" disabled={isResearchingDecisionMaker} onClick={() => { closeMenu(); onResearchDecisionMaker(decisionMakerCandidateExists); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                  {isResearchingDecisionMaker ? "Researching..." : decisionMakerActionLabel}
                 </button>
                 <div className="mt-1 border-t border-[var(--border-default)] pt-1">
-                  <button type="button" onClick={onDelete} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
+                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onDelete(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
                     Delete lead
                   </button>
                 </div>
               </div>
-            </details>
+            ) : null}
           </div>
         </td>
       </tr>
       {isExpanded ? (
-        <tr className="border-b border-[var(--border)] bg-[var(--surface-secondary)]">
+        <tr id={detailsPanelId} className="border-b border-[var(--border)] bg-[var(--surface-secondary)]">
           <td colSpan={7} className="px-4 py-5">
             <div className="rounded-[22px] border border-[var(--border-default)] bg-white p-5 shadow-[var(--shadow-card)]">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -918,7 +1011,7 @@ function ProfessionalLeadRow({
                       <SmartLink href={lead.website} label="Open website" />
                       <SmartLink href={pageUrl} label="Open contact page" />
                       {!safeEmail && canFindEmail ? (
-                        <button type="button" disabled={isEnriching} onClick={onEnrichEmail} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60">
+                        <button type="button" disabled={isEnriching} onClick={() => onEnrichEmail(false)} className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--accent)] transition hover:bg-[var(--accent)]/15 disabled:cursor-not-allowed disabled:opacity-60">
                           {isEnriching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Mail className="h-3.5 w-3.5" />}
                           {isEnriching ? "Finding email…" : "Find email"}
                         </button>
@@ -950,7 +1043,7 @@ function ProfessionalLeadRow({
                     <button
                       type="button"
                       disabled={isResearchingDecisionMaker}
-                      onClick={onResearchDecisionMaker}
+                      onClick={() => onResearchDecisionMaker(Boolean(primaryDecisionMaker))}
                       className="btn-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
@@ -1242,6 +1335,9 @@ export default function LeadsTable() {
   const enrichingLeadIdsRef = useRef(new Set<string>());
   const [researchingDecisionMakerIds, setResearchingDecisionMakerIds] = useState<string[]>([]);
   const researchingDecisionMakerIdsRef = useRef(new Set<string>());
+  const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const bulkStopRequestedRef = useRef(false);
   const leadsRequestIdRef = useRef(0);
   const jobIdFilter = searchParams.get("job_id")?.trim() ?? "";
 
@@ -1384,6 +1480,12 @@ export default function LeadsTable() {
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
   const exportTargetLeads = leads.filter((lead) => lead.id && exportTargetIds.includes(lead.id));
+  const selectedLeadObjects = selectedIds
+    .map((id) => leads.find((lead) => lead.id === id))
+    .filter((lead): lead is Lead => Boolean(lead?.id));
+  const selectedEmailEligibleCount = selectedLeadObjects.filter(isBulkEmailEligible).length;
+  const selectedDecisionMakerEligibleCount = selectedLeadObjects.filter(isBulkDecisionMakerEligible).length;
+  const bulkOperationActive = bulkRunning;
   const restaurantProfileAvailable = exportTargetLeads.some(hasMeaningfulRestaurantIntelligence);
   const selectedLeadsHaveOutreachData =
     selectedIds.length > 0 &&
@@ -1447,6 +1549,10 @@ export default function LeadsTable() {
     }
 
     setLeads((current) => current.map((lead) => (lead.id === updatedLead.id ? { ...lead, ...updatedLead } : lead)));
+  }
+
+  function updateBulkProgress(update: (current: BulkProgress) => BulkProgress) {
+    setBulkProgress((current) => (current ? update(current) : current));
   }
 
   async function deleteOne(id: string) {
@@ -1571,26 +1677,22 @@ export default function LeadsTable() {
     }
   }
 
-  async function handleCopyLead(lead: Lead) {
-    const lines = [
-      lead.company_name,
-      lead.website ? `Website: ${lead.website}` : "Website: Not listed",
-      cleanSafePublicEmail(lead.email) ? `Email: ${cleanSafePublicEmail(lead.email)}` : "Email: Not found",
-      lead.phone ? `Phone: ${lead.phone}` : "Phone: Not listed",
-      lead.location ? `Location: ${lead.location}` : "",
-      getCategorySummary(lead.industry) ? `Category: ${getCategorySummary(lead.industry)}` : "",
-      `Source: ${sourceLabel(lead.source)}`,
-    ].filter(Boolean);
+  async function handleCopyBusinessName(name?: string) {
+    const value = name?.trim();
+    if (!value) {
+      showToast("This lead does not have a business name to copy.", "error");
+      return;
+    }
 
     try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      showToast("Lead details copied.", "success");
+      await navigator.clipboard.writeText(value);
+      showToast("Business name copied.", "success");
     } catch {
-      showToast("Unable to copy lead.", "error");
+      showToast("Unable to copy business name.", "error");
     }
   }
 
-  async function enrichLead(id: string) {
+  async function enrichLead(id: string, options: { silent?: boolean; forceRefresh?: boolean } = {}) {
     if (enrichingLeadIdsRef.current.has(id)) {
       return undefined;
     }
@@ -1601,7 +1703,11 @@ export default function LeadsTable() {
     const previousLead = leads.find((lead) => lead.id === id);
 
     try {
-      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich-email`, { method: "POST" });
+      const response = await fetch(`/api/leads/${encodeURIComponent(id)}/enrich-email`, {
+        method: "POST",
+        headers: options.forceRefresh ? { "Content-Type": "application/json" } : undefined,
+        body: options.forceRefresh ? JSON.stringify({ forceRefresh: true }) : undefined,
+      });
       const payload = (await parseResponseSafely(response)) as unknown as EmailEnrichmentPayload;
 
       if (payload.id) {
@@ -1617,7 +1723,9 @@ export default function LeadsTable() {
       }
 
       const feedback = emailSearchFeedback(previousLead, payload);
-      showToast(feedback.message, feedback.type);
+      if (!options.silent) {
+        showToast(feedback.message, feedback.type);
+      }
 
       return payload;
     } catch (error) {
@@ -1632,9 +1740,9 @@ export default function LeadsTable() {
     }
   }
 
-  async function handleEnrichLead(id: string) {
+  async function handleEnrichLead(id: string, forceRefresh = false) {
     try {
-      await enrichLead(id);
+      await enrichLead(id, { forceRefresh });
     } catch (enrichError) {
       const message = enrichError instanceof Error ? enrichError.message : "Unable to enrich lead.";
       console.error(enrichError);
@@ -1643,7 +1751,7 @@ export default function LeadsTable() {
     }
   }
 
-  async function researchDecisionMaker(id: string, force = false) {
+  async function researchDecisionMaker(id: string, force = false, options: { silent?: boolean } = {}) {
     if (researchingDecisionMakerIdsRef.current.has(id)) return;
     researchingDecisionMakerIdsRef.current.add(id);
     setResearchingDecisionMakerIds((current) => [...new Set([...current, id])]);
@@ -1661,17 +1769,210 @@ export default function LeadsTable() {
       if (payload.lead?.id) updateLead(payload.lead);
       const primary = payload.lead ? getPrimaryDecisionMaker(payload.lead) : undefined;
       const toastType = primary && primary.confidence !== "low" ? "success" : "info";
-      showToast(payload.message ?? "Decision-maker research completed.", toastType);
-      if (payload.warnings?.length) showToast(payload.warnings[0], "warning");
+      if (!options.silent) {
+        showToast(payload.message ?? "Decision-maker research completed.", toastType);
+        if (payload.warnings?.length) showToast(payload.warnings[0], "warning");
+      }
+      return payload;
     } catch (researchError) {
       const message = researchError instanceof Error
         ? researchError.message
         : "Decision-maker research could not be completed. Please try again.";
-      showToast(message, "error");
+      if (!options.silent) {
+        showToast(message, "error");
+        return undefined;
+      }
+      throw new Error(message);
     } finally {
       researchingDecisionMakerIdsRef.current.delete(id);
       setResearchingDecisionMakerIds((current) => current.filter((item) => item !== id));
     }
+  }
+
+  async function runBulkEmailResearch() {
+    const eligibleLeads = selectedLeadObjects.filter(isBulkEmailEligible);
+    const initiallySkipped = selectedLeadObjects.length - eligibleLeads.length;
+
+    if (!selectedLeadObjects.length) return;
+    if (!eligibleLeads.length) {
+      showToast("No selected leads need email research.", "info");
+      return;
+    }
+
+    if (
+      selectedLeadObjects.length > 5 &&
+      !window.confirm(`Find public emails for ${selectedLeadObjects.length} selected leads? LeadHunter will research two business websites at a time.`)
+    ) {
+      return;
+    }
+
+    bulkStopRequestedRef.current = false;
+    setBulkRunning(true);
+    const counts = {
+      completed: 0,
+      found: 0,
+      notFound: 0,
+      failed: 0,
+      skipped: initiallySkipped,
+    };
+    setBulkProgress({
+      type: "email",
+      total: eligibleLeads.length,
+      completed: 0,
+      found: 0,
+      notFound: 0,
+      failed: 0,
+      skipped: initiallySkipped,
+      stopped: false,
+    });
+
+    await runWithConcurrency(
+      eligibleLeads,
+      2,
+      async (lead) => {
+        if (!lead.id || bulkStopRequestedRef.current) return;
+        try {
+          const payload = await enrichLead(lead.id, { silent: true });
+          if (!payload) {
+            counts.skipped += 1;
+          } else if (cleanSafePublicEmail(payload.email)) {
+            counts.found += 1;
+          } else {
+            counts.notFound += 1;
+          }
+        } catch {
+          counts.failed += 1;
+        } finally {
+          counts.completed += 1;
+          updateBulkProgress((current) => ({
+            ...current,
+            completed: counts.completed,
+            found: counts.found,
+            notFound: counts.notFound,
+            failed: counts.failed,
+            skipped: counts.skipped,
+          }));
+        }
+      },
+      () => bulkStopRequestedRef.current,
+    );
+
+    if (bulkStopRequestedRef.current) {
+      counts.skipped += Math.max(0, eligibleLeads.length - counts.completed);
+    }
+
+    setBulkProgress({
+      type: "email",
+      total: eligibleLeads.length,
+      completed: eligibleLeads.length,
+      found: counts.found,
+      notFound: counts.notFound,
+      failed: counts.failed,
+      skipped: counts.skipped,
+      stopped: bulkStopRequestedRef.current,
+    });
+    setBulkRunning(false);
+    showToast(
+      `${bulkStopRequestedRef.current ? "Email research stopped" : "Email research complete"}: ${counts.found} found, ${counts.notFound} not found, ${counts.failed} failed, ${counts.skipped} skipped.`,
+      counts.failed || bulkStopRequestedRef.current ? "warning" : "success",
+    );
+  }
+
+  async function runBulkDecisionMakerResearch() {
+    const eligibleLeads = selectedLeadObjects.filter(isBulkDecisionMakerEligible);
+    const initiallySkipped = selectedLeadObjects.length - eligibleLeads.length;
+
+    if (!selectedLeadObjects.length) return;
+    if (!eligibleLeads.length) {
+      showToast("No selected leads need decision-maker research.", "info");
+      return;
+    }
+
+    if (
+      selectedLeadObjects.length > 5 &&
+      !window.confirm(`Find decision-makers for ${selectedLeadObjects.length} selected leads? LeadHunter will research two businesses at a time.`)
+    ) {
+      return;
+    }
+
+    bulkStopRequestedRef.current = false;
+    setBulkRunning(true);
+    const counts = {
+      completed: 0,
+      found: 0,
+      notFound: 0,
+      failed: 0,
+      skipped: initiallySkipped,
+    };
+    setBulkProgress({
+      type: "decision_maker",
+      total: eligibleLeads.length,
+      completed: 0,
+      found: 0,
+      notFound: 0,
+      failed: 0,
+      skipped: initiallySkipped,
+      stopped: false,
+    });
+
+    await runWithConcurrency(
+      eligibleLeads,
+      2,
+      async (lead) => {
+        if (!lead.id || bulkStopRequestedRef.current) return;
+        try {
+          const payload = await researchDecisionMaker(lead.id, false, { silent: true });
+          if (!payload) {
+            counts.skipped += 1;
+            return;
+          }
+          const updatedLead = payload?.lead ?? lead;
+          if (getPrimaryDecisionMaker(updatedLead)) {
+            counts.found += 1;
+          } else {
+            counts.notFound += 1;
+          }
+        } catch {
+          counts.failed += 1;
+        } finally {
+          counts.completed += 1;
+          updateBulkProgress((current) => ({
+            ...current,
+            completed: counts.completed,
+            found: counts.found,
+            notFound: counts.notFound,
+            failed: counts.failed,
+            skipped: counts.skipped,
+          }));
+        }
+      },
+      () => bulkStopRequestedRef.current,
+    );
+
+    if (bulkStopRequestedRef.current) {
+      counts.skipped += Math.max(0, eligibleLeads.length - counts.completed);
+    }
+
+    setBulkProgress({
+      type: "decision_maker",
+      total: eligibleLeads.length,
+      completed: eligibleLeads.length,
+      found: counts.found,
+      notFound: counts.notFound,
+      failed: counts.failed,
+      skipped: counts.skipped,
+      stopped: bulkStopRequestedRef.current,
+    });
+    setBulkRunning(false);
+    showToast(
+      `${bulkStopRequestedRef.current ? "Decision-maker research stopped" : "Decision-maker research complete"}: ${counts.found} candidates found, ${counts.notFound} not found, ${counts.failed} failed, ${counts.skipped} skipped.`,
+      counts.failed || bulkStopRequestedRef.current ? "warning" : "success",
+    );
+  }
+
+  function stopBulkOperation() {
+    bulkStopRequestedRef.current = true;
+    updateBulkProgress((current) => ({ ...current, stopped: true }));
   }
 
   async function updateDecisionMaker(
@@ -2038,24 +2339,95 @@ export default function LeadsTable() {
       ) : null}
 
       {selectedIds.length ? (
-        <div className="app-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm font-medium text-[var(--text-primary)]">{selectedIds.length} selected</p>
-          <div className="flex flex-wrap gap-3">
-            <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary whitespace-nowrap">
-              <FileSpreadsheet className="h-4 w-4" />
-              Sync selected
-            </button>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
-              {exporting ? "Exporting..." : "Export to CSV"}
-            </button>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "xlsx")} className="btn-secondary disabled:cursor-not-allowed disabled:opacity-60">
-              {exporting ? "Exporting..." : "Export to Excel"}
-            </button>
-            <button type="button" disabled={deleting} onClick={() => void deleteSelected()} className="btn-danger disabled:cursor-not-allowed disabled:opacity-60">
-              <Trash2 className="h-4 w-4" />
-              {deleting ? "Deleting..." : "Delete selected"}
-            </button>
+        <div className="app-card space-y-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-[var(--text-primary)]">{selectedIds.length} selected</p>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                {selectedEmailEligibleCount} need email research · {selectedDecisionMakerEligibleCount} need decision-maker research
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={bulkOperationActive || !selectedEmailEligibleCount}
+                  onClick={() => void runBulkEmailResearch()}
+                  className="btn-primary h-10 justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Mail className="h-4 w-4" />
+                  Find emails ({selectedIds.length})
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkOperationActive || !selectedDecisionMakerEligibleCount}
+                  onClick={() => void runBulkDecisionMakerResearch()}
+                  className="btn-secondary h-10 justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <UserSearch className="h-4 w-4" />
+                  Find decision-makers ({selectedIds.length})
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-10 justify-center whitespace-nowrap px-3 text-xs">
+                  <FileSpreadsheet className="h-4 w-4" />
+                  Sync selected
+                </button>
+                <details className="group relative">
+                  <summary className="btn-secondary h-10 cursor-pointer list-none justify-center whitespace-nowrap px-3 text-xs">
+                    <Download className="h-4 w-4" />
+                    Export
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </summary>
+                  <div className="absolute right-0 z-30 mt-2 w-44 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]">
+                    <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] disabled:opacity-50">
+                      {exporting ? "Exporting..." : "Export to CSV"}
+                    </button>
+                    <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "xlsx")} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] disabled:opacity-50">
+                      {exporting ? "Exporting..." : "Export to Excel"}
+                    </button>
+                  </div>
+                </details>
+                <details className="group relative">
+                  <summary className="btn-secondary h-10 cursor-pointer list-none justify-center whitespace-nowrap px-3 text-xs">
+                    More
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </summary>
+                  <div className="absolute right-0 z-30 mt-2 w-44 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]">
+                    <button
+                      type="button"
+                      disabled={deleting || bulkOperationActive}
+                      onClick={() => void deleteSelected()}
+                      className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)] disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Delete selected"}
+                    </button>
+                  </div>
+                </details>
+              </div>
+            </div>
           </div>
+          {bulkProgress ? (
+            <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--text-primary)]">
+                    {bulkProgress.type === "email" ? "Finding emails" : "Researching decision-makers"}: {Math.min(bulkProgress.completed, bulkProgress.total)} of {bulkProgress.total}
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    {bulkProgress.type === "email"
+                      ? `${bulkProgress.found} found · ${bulkProgress.notFound} no public email · ${bulkProgress.failed} failed · ${bulkProgress.skipped} skipped · ${Math.max(0, bulkProgress.total - bulkProgress.completed)} remaining`
+                      : `${bulkProgress.found} candidates found · ${bulkProgress.notFound} no reliable candidate · ${bulkProgress.failed} failed · ${bulkProgress.skipped} skipped · ${Math.max(0, bulkProgress.total - bulkProgress.completed)} remaining`}
+                  </p>
+                </div>
+                {bulkOperationActive ? (
+                  <button type="button" onClick={stopBulkOperation} disabled={bulkProgress.stopped} className="btn-secondary h-9 justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60">
+                    {bulkProgress.stopped ? "Stopping..." : "Stop remaining"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -2073,15 +2445,15 @@ export default function LeadsTable() {
       ) : (
         <section className="app-card overflow-hidden p-0">
           <div className="overflow-x-auto">
-          <table className="w-full min-w-[1280px] table-fixed text-left text-sm">
+          <table className="w-full min-w-[1180px] table-fixed text-left text-sm">
             <colgroup>
-              <col style={{ width: "44px" }} />
-              <col style={{ width: "27%" }} />
+              <col style={{ width: "48px" }} />
+              <col style={{ width: "30%" }} />
               <col style={{ width: "16%" }} />
               <col style={{ width: "16%" }} />
-              <col style={{ width: "19%" }} />
-              <col style={{ width: "9%" }} />
-              <col style={{ width: "230px" }} />
+              <col style={{ width: "20%" }} />
+              <col style={{ width: "112px" }} />
+              <col style={{ width: "64px" }} />
             </colgroup>
             <thead className="border-b border-[var(--border)] bg-[var(--surface-secondary)] text-xs text-[var(--text-secondary)]">
               <tr>
@@ -2122,6 +2494,7 @@ export default function LeadsTable() {
                     <ProfessionalLeadRow
                       key={rowId}
                       lead={lead}
+                      rowId={rowId}
                       isExpanded={expandedLeadId === rowId}
                       isSelected={lead.id ? selectedIds.includes(lead.id) : false}
                       onToggleExpand={() => setExpandedLeadId(expandedLeadId === rowId ? null : rowId)}
@@ -2131,17 +2504,17 @@ export default function LeadsTable() {
                         }
                       }}
                       onCopyEmail={() => void handleCopyEmail(cleanSafePublicEmail(lead.email))}
-                      onCopyLead={() => void handleCopyLead(lead)}
+                      onCopyBusinessName={() => void handleCopyBusinessName(lead.company_name)}
                       onCopyPhone={() => void handleCopyPhone(lead.phone)}
                       onCopyWebsite={() => void handleCopyWebsite(lead.website)}
-                      onEnrichEmail={() => {
+                      onEnrichEmail={(forceRefresh = false) => {
                         if (lead.id) {
-                          void handleEnrichLead(lead.id);
+                          void handleEnrichLead(lead.id, forceRefresh);
                         }
                       }}
-                      onResearchDecisionMaker={() => {
+                      onResearchDecisionMaker={(forceRequested = false) => {
                         if (lead.id) {
-                          const force = Boolean(
+                          const force = forceRequested || Boolean(
                             lead.decision_maker_last_checked_at &&
                               window.confirm("This lead was researched before. Run public research again?"),
                           );
