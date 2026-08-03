@@ -7,7 +7,6 @@ import { ChevronDown, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Ma
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
-  getContactabilityStatus,
   getContactPageUrl,
   normalizeContactFilter,
   type ContactFilter,
@@ -23,6 +22,7 @@ import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
+const DEFAULT_EXPORT_PROFILE: LeadExportProfile = "standard";
 
 const deliveryPlatforms: Array<{ label: string; value: DeliveryPlatformId }> = [
   { label: "Uber Eats", value: "ubereats" },
@@ -90,6 +90,12 @@ type ManualDecisionMakerInput = {
 };
 
 class EmailSearchResponseError extends Error {}
+
+function contactPersonCopy(value: string) {
+  return value.replace(/decision[-\s]?maker/gi, (match) =>
+    match[0] === match[0]?.toUpperCase() ? "Contact person" : "contact person",
+  );
+}
 
 async function runWithConcurrency<T>(
   items: T[],
@@ -467,7 +473,7 @@ function statusBadge(label: string, status?: string) {
   return <span className={`status-badge px-2 py-0.5 text-[11px] ${className}`}>{label}</span>;
 }
 
-function InfoItem({ label, value }: { label: string; value?: string | string[] }) {
+function InfoItem({ label, value, className = "" }: { label: string; value?: string | string[]; className?: string }) {
   const display = emptyText(value);
 
   if (!display) {
@@ -475,7 +481,7 @@ function InfoItem({ label, value }: { label: string; value?: string | string[] }
   }
 
   return (
-    <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3">
+    <div className={`rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3 ${className}`}>
       <p className="app-label text-[10px]">{label}</p>
       <p className="mt-1 break-words text-sm text-[var(--text-primary)]">{display}</p>
     </div>
@@ -507,7 +513,6 @@ function hasDeliverySignal(lead: Lead) {
 
 function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
   const status = deliveryPlatformStatus(lead, platform);
-  const confidence = deliveryPlatformConfidence(lead, platform);
   const menuUrl = deliveryPlatformMenuUrl(lead, platform);
 
   return (
@@ -515,9 +520,6 @@ function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: Delive
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-[var(--text-primary)]">{deliveryPlatformLabel(platform)}</p>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            {typeof confidence === "number" ? `${confidence}/100 confidence` : "No confidence score"}
-          </p>
         </div>
         {statusBadge(deliveryStatusLabelForLead(lead, platform), status)}
       </div>
@@ -584,23 +586,6 @@ function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
   return lead.delivery_justeat_menu_url;
 }
 
-function deliveryPlatformConfidence(lead: Lead, platform: DeliveryPlatformId) {
-  if (platform === "ubereats") {
-    return lead.delivery_ubereats_confidence;
-  }
-  if (platform === "doordash") {
-    return lead.delivery_doordash_confidence;
-  }
-  if (platform === "grubhub") {
-    return lead.delivery_grubhub_confidence;
-  }
-  if (platform === "deliveroo") {
-    return lead.delivery_deliveroo_confidence;
-  }
-
-  return lead.delivery_justeat_confidence;
-}
-
 function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
   if (status === "completed") {
     return "Completed";
@@ -646,46 +631,28 @@ function manualEmailResearchStatus(lead: Lead) {
   return contact.status === "error" ? "error" as const : "not_found" as const;
 }
 
-function decisionMakerStatusLabel(lead: Lead) {
+function ContactPersonSummary({ lead }: { lead: Lead }) {
   const primary = getPrimaryDecisionMaker(lead);
-  if (primary) return primary.verification_status === "manually_verified" ? "Verified" : `${primary.confidence} confidence`;
-  if (lead.decision_maker_research_status === "not_found" || lead.decision_maker_research_status === "candidate_found") {
-    return "Needs research";
-  }
-  if (lead.decision_maker_research_status === "partial") return "Partial result";
-  if (lead.decision_maker_research_status === "unavailable") return "Research unavailable";
-  if (lead.decision_maker_research_status === "error") return "Research failed";
-  return "Not researched";
-}
-
-function DecisionMakerSummary({ lead }: { lead: Lead }) {
-  const primary = getPrimaryDecisionMaker(lead);
-  const label = decisionMakerStatusLabel(lead);
-  const status = primary
-    ? primary.verification_status === "manually_verified"
-      ? "found"
-      : primary.confidence === "low"
-        ? "unclear"
-        : "found"
-    : lead.decision_maker_research_status === "error"
-      ? "error"
-      : lead.decision_maker_research_status === "partial"
-        ? "partial"
-        : "not_checked";
 
   return (
-    <div className="space-y-2">
+    <div>
       {primary ? (
         <div>
           <p className="max-w-[220px] truncate text-sm font-semibold text-[var(--text-primary)]">{primary.name}</p>
           <p className="max-w-[220px] truncate text-xs text-[var(--text-secondary)]">{primary.role}</p>
         </div>
       ) : (
-        <p className="text-xs font-medium text-[var(--text-muted)]">{label}</p>
+        <p className="text-xs font-medium text-[var(--text-muted)]">Needs research</p>
       )}
-      {primary ? statusBadge(label, status) : null}
     </div>
   );
+}
+
+function bestContactRouteLabel(method: ReturnType<typeof getOutreachIntelligence>["bestContactMethod"]) {
+  if (method === "Decision-maker email" || method === "Business email") return "Email";
+  if (method === "Website only") return "Website";
+  if (method === "Not currently contactable") return "Needs research";
+  return method;
 }
 
 function ProfessionalLeadRow({
@@ -730,8 +697,11 @@ function ProfessionalLeadRow({
   const [showManualCandidate, setShowManualCandidate] = useState(false);
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contactPersonMenuOpen, setContactPersonMenuOpen] = useState(false);
   const menuContainerRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const contactPersonMenuContainerRef = useRef<HTMLDivElement | null>(null);
+  const contactPersonMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const [manualCandidate, setManualCandidate] = useState<ManualDecisionMakerInput>({
     name: "",
     role: "",
@@ -747,7 +717,6 @@ function ProfessionalLeadRow({
   const websiteLabel = displayDomain(lead.website) || "No website";
   const pageUrl = getContactPageUrl(lead) ?? undefined;
   const bestContactMethod = getBestContactMethod(lead);
-  const contactability = getContactabilityStatus(lead);
   const showDeliveryIntelligence = hasDeliverySignal(lead);
   const primaryDecisionMaker = getPrimaryDecisionMaker(lead);
   const decisionMakerCandidateExists = hasDecisionMakerCandidate(lead);
@@ -759,7 +728,7 @@ function ProfessionalLeadRow({
     : emailResearchStatus === "error"
       ? "Retry email research"
       : "Find email";
-  const decisionMakerActionLabel = decisionMakerCandidateExists ? "Research decision-maker again" : "Find decision-maker";
+  const decisionMakerActionLabel = decisionMakerCandidateExists ? "Research contact person again" : "Find contact person";
   const hasNotes =
     Boolean(lead.description?.trim()) ||
     Boolean(lead.founder_name?.trim()) ||
@@ -772,11 +741,12 @@ function ProfessionalLeadRow({
   useEffect(() => {
     if (!isExpanded) {
       setMenuOpen(false);
+      setContactPersonMenuOpen(false);
     }
   }, [isExpanded]);
 
   useEffect(() => {
-    if (!menuOpen) {
+    if (!menuOpen && !contactPersonMenuOpen) {
       return;
     }
 
@@ -784,13 +754,21 @@ function ProfessionalLeadRow({
       if (!menuContainerRef.current?.contains(event.target as Node)) {
         setMenuOpen(false);
       }
+      if (!contactPersonMenuContainerRef.current?.contains(event.target as Node)) {
+        setContactPersonMenuOpen(false);
+      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        setMenuOpen(false);
-        menuButtonRef.current?.focus();
+        if (contactPersonMenuOpen) {
+          setContactPersonMenuOpen(false);
+          contactPersonMenuButtonRef.current?.focus();
+        } else {
+          setMenuOpen(false);
+          menuButtonRef.current?.focus();
+        }
       }
     }
 
@@ -801,10 +779,14 @@ function ProfessionalLeadRow({
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [menuOpen]);
+  }, [contactPersonMenuOpen, menuOpen]);
 
   function closeMenu() {
     setMenuOpen(false);
+  }
+
+  function closeContactPersonMenu() {
+    setContactPersonMenuOpen(false);
   }
 
   return (
@@ -876,9 +858,8 @@ function ProfessionalLeadRow({
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-2">
-            {statusBadge(contactability, contactability === "Contactable" ? "found" : contactability === "Weak" ? "unclear" : "not_found")}
             {emailResearchStatus === "found"
-              ? statusBadge("Public email found", "found")
+              ? statusBadge("Email found", "found")
               : emailResearchStatus === "error"
                 ? statusBadge("Email research failed", "error")
                 : emailResearchStatus === "not_found"
@@ -897,13 +878,7 @@ function ProfessionalLeadRow({
           </div>
         </td>
         <td className="px-4 py-5 align-top">
-          <div className="space-y-2">
-            <DecisionMakerSummary lead={lead} />
-            <div>
-              <p className="text-sm font-semibold text-[var(--text-primary)]">{outreach.readinessScore}/100</p>
-              <p className="text-xs text-[var(--text-secondary)]">{outreach.readinessStatus}</p>
-            </div>
-          </div>
+          <ContactPersonSummary lead={lead} />
         </td>
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">
           <span className="block w-[112px] whitespace-nowrap">{formatRelative(lead.scraped_at)}</span>
@@ -915,6 +890,7 @@ function ProfessionalLeadRow({
               ref={menuButtonRef}
               onClick={(event) => {
                 event.stopPropagation();
+                setContactPersonMenuOpen(false);
                 setMenuOpen((current) => !current);
               }}
               aria-haspopup="menu"
@@ -1008,8 +984,7 @@ function ProfessionalLeadRow({
                     <InfoItem label="Phone" value={lead.phone} />
                     <InfoItem label="Website" value={displayDomain(lead.website)} />
                     <InfoItem label="Best contact method" value={bestContactMethod} />
-                    <InfoItem label="Contactability" value={contactability} />
-                    <InfoItem label="Scraped" value={formatDate(lead.scraped_at)} />
+                    <InfoItem label="Scraped" value={formatDate(lead.scraped_at)} className="sm:col-span-2" />
                   </div>
                   <div className="mt-4">
                     <IndustryTags industry={lead.industry} />
@@ -1025,13 +1000,14 @@ function ProfessionalLeadRow({
                           {statusBadge("Email found", "found")}
                           <span className="text-sm text-[var(--text-primary)]">{safeEmail}</span>
                         </div>
-                        {typeof lead.email_confidence === "number" ? (
-                          <p className="text-sm text-[var(--text-secondary)]">{lead.email_confidence}/100 confidence</p>
-                        ) : null}
                         <SmartLink href={lead.email_source_url} label="Open source" />
                       </>
                     ) : (
-                      <div className="rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-3 text-sm text-[var(--text-secondary)]">
+                      <div className={`rounded-xl border p-3 text-sm ${
+                        emailResearchStatus === "error"
+                          ? "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger)]"
+                          : "border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-secondary)]"
+                      }`}>
                         {emailResearchStatus === "error"
                           ? "Email research failed — retry."
                           : emailResearchStatus === "not_found"
@@ -1070,7 +1046,7 @@ function ProfessionalLeadRow({
                 <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="app-label text-xs">Decision-maker</p>
+                      <p className="app-label text-xs">Contact person</p>
                       <p className="mt-1 text-xs text-[var(--text-secondary)]">Public business evidence only.</p>
                     </div>
                     <button
@@ -1080,28 +1056,19 @@ function ProfessionalLeadRow({
                       className="btn-secondary px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {isResearchingDecisionMaker ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserSearch className="h-3.5 w-3.5" />}
-                      {isResearchingDecisionMaker ? "Researching…" : primaryDecisionMaker ? "Research again" : "Find decision-maker"}
+                      {isResearchingDecisionMaker ? "Researching…" : primaryDecisionMaker ? "Research contact person again" : "Find contact person"}
                     </button>
                   </div>
                   {primaryDecisionMaker ? (
                     <div className="mt-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="font-semibold text-[var(--text-primary)]">{primaryDecisionMaker.name}</p>
-                          <p className="mt-1 text-sm text-[var(--text-secondary)]">{primaryDecisionMaker.role}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {statusBadge(`${primaryDecisionMaker.confidence[0].toUpperCase()}${primaryDecisionMaker.confidence.slice(1)} confidence`, primaryDecisionMaker.confidence === "low" ? "unclear" : "found")}
-                          {statusBadge(
-                            primaryDecisionMaker.verification_status === "manually_verified" ? "Manually verified" : "Needs verification",
-                            primaryDecisionMaker.verification_status === "manually_verified" ? "found" : "unclear",
-                          )}
-                        </div>
+                      <div>
+                        <p className="font-semibold text-[var(--text-primary)]">{primaryDecisionMaker.name}</p>
+                        <p className="mt-1 text-sm text-[var(--text-secondary)]">{primaryDecisionMaker.role}</p>
                       </div>
                       {cleanSafePublicEmail(primaryDecisionMaker.public_work_email) ? (
                         <p className="mt-3 text-sm text-[var(--text-primary)]">{cleanSafePublicEmail(primaryDecisionMaker.public_work_email)}</p>
                       ) : null}
-                      <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
                         <SmartLink
                           href={/^https?:\/\//i.test(primaryDecisionMaker.source_url) ? primaryDecisionMaker.source_url : undefined}
                           label="Open evidence"
@@ -1115,50 +1082,68 @@ function ProfessionalLeadRow({
                           }
                           label="Open public profile"
                         />
-                        {primaryDecisionMaker.id && primaryDecisionMaker.verification_status !== "manually_verified" ? (
-                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "verify")} className="btn-secondary px-3 py-1.5 text-xs">
-                            Mark verified
-                          </button>
-                        ) : null}
                         {primaryDecisionMaker.id ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingCandidateId(primaryDecisionMaker.id ?? null);
-                              setManualCandidate({
-                                name: primaryDecisionMaker.name,
-                                role: primaryDecisionMaker.role,
-                                publicWorkEmail: primaryDecisionMaker.public_work_email ?? "",
-                                publicProfileUrl: primaryDecisionMaker.public_profile_url ?? "",
-                                sourceUrl: primaryDecisionMaker.source_url,
-                              });
-                              setShowManualCandidate(true);
-                            }}
-                            className="btn-secondary px-3 py-1.5 text-xs"
-                          >
-                            Edit
-                          </button>
-                        ) : null}
-                        {primaryDecisionMaker.id && !primaryDecisionMaker.is_primary ? (
-                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "primary")} className="btn-secondary px-3 py-1.5 text-xs">
-                            Make primary
-                          </button>
-                        ) : null}
-                        {primaryDecisionMaker.id ? (
-                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "reject")} className="btn-secondary px-3 py-1.5 text-xs text-[var(--danger)]">
-                            Reject
-                          </button>
-                        ) : null}
-                        {primaryDecisionMaker.id ? (
-                          <button type="button" onClick={() => onUpdateDecisionMaker(primaryDecisionMaker, "delete")} className="btn-secondary px-3 py-1.5 text-xs text-[var(--danger)]">
-                            Delete
-                          </button>
+                          <div ref={contactPersonMenuContainerRef} className="relative ml-auto">
+                            <button
+                              ref={contactPersonMenuButtonRef}
+                              type="button"
+                              aria-haspopup="menu"
+                              aria-expanded={contactPersonMenuOpen}
+                              aria-controls={`contact-person-actions-${domRowId}`}
+                              aria-label={`More actions for ${primaryDecisionMaker.name}`}
+                              onClick={() => {
+                                setMenuOpen(false);
+                                setContactPersonMenuOpen((current) => !current);
+                              }}
+                              className="icon-button h-9 w-9"
+                            >
+                              <MoreHorizontal className="h-4 w-4" />
+                            </button>
+                            {contactPersonMenuOpen ? (
+                              <div
+                                id={`contact-person-actions-${domRowId}`}
+                                role="menu"
+                                className="absolute right-0 top-10 z-30 w-52 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]"
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    closeContactPersonMenu();
+                                    setEditingCandidateId(primaryDecisionMaker.id ?? null);
+                                    setManualCandidate({
+                                      name: primaryDecisionMaker.name,
+                                      role: primaryDecisionMaker.role,
+                                      publicWorkEmail: primaryDecisionMaker.public_work_email ?? "",
+                                      publicProfileUrl: primaryDecisionMaker.public_profile_url ?? "",
+                                      sourceUrl: primaryDecisionMaker.source_url,
+                                    });
+                                    setShowManualCandidate(true);
+                                  }}
+                                  className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]"
+                                >
+                                  Edit contact person
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    closeContactPersonMenu();
+                                    onUpdateDecisionMaker(primaryDecisionMaker, "delete");
+                                  }}
+                                  className="mt-1 block w-full border-t border-[var(--border-default)] px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]"
+                                >
+                                  Delete contact person
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                     </div>
                   ) : (
                     <div className="mt-4 rounded-xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 text-sm text-[var(--text-secondary)]">
-                      No reliable public decision-maker found. Use the research links below or add a manually verified candidate.
+                      No reliable public contact person found. Use the research links below or add a manual candidate.
                     </div>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
@@ -1227,7 +1212,7 @@ function ProfessionalLeadRow({
                         value={manualCandidate.name}
                         onChange={(event) => setManualCandidate((current) => ({ ...current, name: event.target.value }))}
                         placeholder="Name"
-                        aria-label="Decision-maker name"
+                        aria-label="Contact person name"
                         className="app-input"
                       />
                       <input
@@ -1235,7 +1220,7 @@ function ProfessionalLeadRow({
                         value={manualCandidate.role}
                         onChange={(event) => setManualCandidate((current) => ({ ...current, role: event.target.value }))}
                         placeholder="Role"
-                        aria-label="Decision-maker role"
+                        aria-label="Contact person role"
                         className="app-input"
                       />
                       <input
@@ -1263,25 +1248,20 @@ function ProfessionalLeadRow({
                       />
                       <button type="submit" disabled={savingManualCandidate} className="btn-primary sm:col-span-2 disabled:cursor-not-allowed disabled:opacity-60">
                         {savingManualCandidate ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                        {savingManualCandidate ? "Saving…" : editingCandidateId ? "Save changes" : "Save candidate"}
+                        {savingManualCandidate ? "Saving…" : editingCandidateId ? "Save changes" : "Save contact person"}
                       </button>
                     </form>
                   ) : null}
                 </section>
 
                 <section className="rounded-2xl border border-[var(--border-default)] bg-white p-4">
-                  <p className="app-label text-xs">Outreach intelligence</p>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {statusBadge(`${outreach.readinessScore}/100`, outreach.readinessScore >= 60 ? "found" : outreach.readinessScore >= 40 ? "unclear" : "not_checked")}
-                    <span className="text-sm font-semibold text-[var(--text-primary)]">{outreach.readinessStatus}</span>
-                  </div>
-                  <p className="mt-2 text-xs text-[var(--text-secondary)]">
-                    Based on contact availability and enrichment completeness. This is not a prediction of response or conversion.
-                  </p>
-                  <div className="mt-4 space-y-2">
-                    {outreach.opportunitySignals.slice(0, 5).map((signal) => (
-                      <p key={signal} className="text-sm text-[var(--text-secondary)]">• {signal}</p>
-                    ))}
+                  <p className="app-label text-xs">Outreach summary</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <InfoItem label="Best contact route" value={bestContactRouteLabel(outreach.bestContactMethod)} />
+                    <InfoItem
+                      label="Contact person"
+                      value={primaryDecisionMaker ? `${primaryDecisionMaker.name} — ${primaryDecisionMaker.role}` : "Not researched"}
+                    />
                   </div>
                   <div className="mt-4 rounded-xl border border-blue-200 bg-[var(--primary-soft)] p-3">
                     <p className="app-label text-[10px]">Suggested outreach angle</p>
@@ -1361,8 +1341,6 @@ export default function LeadsTable() {
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
-  const [exportProfile, setExportProfile] = useState<LeadExportProfile>("standard");
-  const exportProfileSelectionRef = useRef("");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
@@ -1512,26 +1490,12 @@ export default function LeadsTable() {
   const selectedVisibleIds = selectableVisibleIds.filter((id) => selectedIds.includes(id));
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
   const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
-  const exportTargetLeads = leads.filter((lead) => lead.id && exportTargetIds.includes(lead.id));
   const selectedLeadObjects = selectedIds
     .map((id) => leads.find((lead) => lead.id === id))
     .filter((lead): lead is Lead => Boolean(lead?.id));
   const selectedEmailEligibleCount = selectedLeadObjects.filter(isBulkEmailEligible).length;
   const selectedDecisionMakerEligibleCount = selectedLeadObjects.filter(isBulkDecisionMakerEligible).length;
   const bulkOperationActive = bulkRunning;
-  const restaurantProfileAvailable = exportTargetLeads.some(hasMeaningfulRestaurantIntelligence);
-  const selectedLeadsHaveOutreachData =
-    selectedIds.length > 0 &&
-    exportTargetLeads.some(
-      (lead) =>
-        Boolean(getPrimaryDecisionMaker(lead)) ||
-        Boolean(cleanSafePublicEmail(lead.email)) ||
-        Boolean(getContactPageUrl(lead)) ||
-        lead.public_whatsapp_status === "confirmed_public" ||
-        (lead.decision_maker_research_status !== undefined &&
-          lead.decision_maker_research_status !== "not_researched"),
-    );
-  const selectedIdsSignature = [...selectedIds].sort().join(",");
   const filtersActive =
     sourceFilter !== "all" ||
     websiteStatusFilter !== "all" ||
@@ -1546,12 +1510,6 @@ export default function LeadsTable() {
     contactFilter !== "all",
     Boolean(jobIdFilter),
   ].filter(Boolean).length;
-
-  useEffect(() => {
-    if (selectedIdsSignature === exportProfileSelectionRef.current) return;
-    exportProfileSelectionRef.current = selectedIdsSignature;
-    setExportProfile(selectedIds.length && selectedLeadsHaveOutreachData ? "outreach_ready" : "standard");
-  }, [selectedIds.length, selectedIdsSignature, selectedLeadsHaveOutreachData]);
 
   function clearFilters() {
     setSearch("");
@@ -1801,20 +1759,20 @@ export default function LeadsTable() {
       });
       const payload = (await parseResponseSafely(response)) as DecisionMakerResearchPayload;
       if (!response.ok) {
-        throw new Error(getApiErrorMessage(response, payload.error ?? "Decision-maker research could not be completed."));
+        throw new Error(contactPersonCopy(getApiErrorMessage(response, payload.error ?? "Contact person research could not be completed.")));
       }
       if (payload.lead?.id) updateLead(payload.lead);
       const primary = payload.lead ? getPrimaryDecisionMaker(payload.lead) : undefined;
       const toastType = primary && primary.confidence !== "low" ? "success" : "info";
       if (!options.silent) {
-        showToast(payload.message ?? "Decision-maker research completed.", toastType);
-        if (payload.warnings?.length) showToast(payload.warnings[0], "warning");
+        showToast(primary ? "Contact person found." : "No reliable public contact person found.", toastType);
+        if (payload.warnings?.length) showToast(contactPersonCopy(payload.warnings[0]), "warning");
       }
       return payload;
     } catch (researchError) {
       const message = researchError instanceof Error
-        ? researchError.message
-        : "Decision-maker research could not be completed. Please try again.";
+        ? contactPersonCopy(researchError.message)
+        : "Contact person research could not be completed. Please try again.";
       if (!options.silent) {
         showToast(message, "error");
         return undefined;
@@ -1921,13 +1879,13 @@ export default function LeadsTable() {
 
     if (!selectedLeadObjects.length) return;
     if (!eligibleLeads.length) {
-      showToast("No selected leads need decision-maker research.", "info");
+      showToast("No selected leads need contact-person research.", "info");
       return;
     }
 
     if (
       selectedLeadObjects.length > 5 &&
-      !window.confirm(`Find decision-makers for ${selectedLeadObjects.length} selected leads? LeadHunter will research two businesses at a time.`)
+      !window.confirm(`Find contact people for ${selectedLeadObjects.length} selected leads? LeadHunter will research two businesses at a time.`)
     ) {
       return;
     }
@@ -2002,7 +1960,7 @@ export default function LeadsTable() {
     });
     setBulkRunning(false);
     showToast(
-      `${bulkStopRequestedRef.current ? "Decision-maker research stopped" : "Decision-maker research complete"}: ${counts.found} candidates found, ${counts.notFound} not found, ${counts.failed} failed, ${counts.skipped} skipped.`,
+      `${bulkStopRequestedRef.current ? "Contact-person research stopped" : "Contact-person research complete"}: ${counts.found} found, ${counts.notFound} not found, ${counts.failed} failed, ${counts.skipped} skipped.`,
       counts.failed || bulkStopRequestedRef.current ? "warning" : "success",
     );
   }
@@ -2026,7 +1984,7 @@ export default function LeadsTable() {
           { method: "DELETE" },
         );
         const payload = await parseResponseSafely(response);
-        if (!response.ok) throw new Error(String(payload.error ?? "Decision-maker deletion failed."));
+        if (!response.ok) throw new Error(contactPersonCopy(String(payload.error ?? "Contact-person deletion failed.")));
         setLeads((current) =>
           current.map((lead) =>
             lead.id === leadId
@@ -2034,9 +1992,9 @@ export default function LeadsTable() {
               : lead,
           ),
         );
-        showToast("Decision-maker candidate deleted.", "success");
+        showToast("Contact person deleted.", "success");
       } catch (candidateError) {
-        showToast(candidateError instanceof Error ? candidateError.message : "Decision-maker deletion failed.", "error");
+        showToast(candidateError instanceof Error ? contactPersonCopy(candidateError.message) : "Contact-person deletion failed.", "error");
       }
       return;
     }
@@ -2057,7 +2015,7 @@ export default function LeadsTable() {
         },
       );
       const payload = (await parseResponseSafely(response)) as { candidate?: DecisionMaker; error?: string; message?: string };
-      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Decision-maker update failed.");
+      if (!response.ok || !payload.candidate) throw new Error(contactPersonCopy(payload.error ?? "Contact-person update failed."));
       setLeads((current) =>
         current.map((lead) => {
           if (lead.id !== leadId) return lead;
@@ -2073,9 +2031,9 @@ export default function LeadsTable() {
           return { ...lead, decision_makers: candidates };
         }),
       );
-      showToast(payload.message ?? "Decision-maker candidate updated.", "success");
+      showToast("Contact person updated.", "success");
     } catch (candidateError) {
-      showToast(candidateError instanceof Error ? candidateError.message : "Decision-maker update failed.", "error");
+      showToast(candidateError instanceof Error ? contactPersonCopy(candidateError.message) : "Contact-person update failed.", "error");
     }
   }
 
@@ -2087,7 +2045,7 @@ export default function LeadsTable() {
         body: JSON.stringify({ action: "add_manual", ...input }),
       });
       const payload = (await parseResponseSafely(response)) as { candidate?: DecisionMaker; error?: string; message?: string };
-      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Unable to add decision-maker candidate.");
+      if (!response.ok || !payload.candidate) throw new Error(contactPersonCopy(payload.error ?? "Unable to add contact person."));
       setLeads((current) =>
         current.map((lead) =>
           lead.id === leadId
@@ -2095,10 +2053,10 @@ export default function LeadsTable() {
             : lead,
         ),
       );
-      showToast(payload.message ?? "Decision-maker candidate added.", "success");
+      showToast("Contact person added.", "success");
       return true;
     } catch (candidateError) {
-      showToast(candidateError instanceof Error ? candidateError.message : "Unable to add decision-maker candidate.", "error");
+      showToast(candidateError instanceof Error ? contactPersonCopy(candidateError.message) : "Unable to add contact person.", "error");
       return false;
     }
   }
@@ -2122,7 +2080,7 @@ export default function LeadsTable() {
         error?: string;
         message?: string;
       };
-      if (!response.ok || !payload.candidate) throw new Error(payload.error ?? "Unable to edit decision-maker candidate.");
+      if (!response.ok || !payload.candidate) throw new Error(contactPersonCopy(payload.error ?? "Unable to edit contact person."));
       setLeads((current) =>
         current.map((lead) =>
           lead.id === leadId
@@ -2135,10 +2093,10 @@ export default function LeadsTable() {
             : lead,
         ),
       );
-      showToast(payload.message ?? "Decision-maker candidate updated.", "success");
+      showToast("Contact person updated.", "success");
       return true;
     } catch (candidateError) {
-      showToast(candidateError instanceof Error ? candidateError.message : "Unable to edit decision-maker candidate.", "error");
+      showToast(candidateError instanceof Error ? contactPersonCopy(candidateError.message) : "Unable to edit contact person.", "error");
       return false;
     }
   }
@@ -2147,7 +2105,7 @@ export default function LeadsTable() {
     setExporting(true);
 
     try {
-      const response = await fetch(buildExportUrl(ids, format, exportFilter, exportProfile), { cache: "no-store" });
+      const response = await fetch(buildExportUrl(ids, format, exportFilter, DEFAULT_EXPORT_PROFILE), { cache: "no-store" });
 
       if (!response.ok) {
         const payload = await parseResponseSafely(response);
@@ -2236,18 +2194,8 @@ export default function LeadsTable() {
             </div>
             <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
-          <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-[190px_210px_auto_auto_auto] xl:w-auto">
-            <label className="flex flex-col gap-2">
-              <span className="app-label text-xs">Export profile</span>
-              <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input h-11">
-                <option value="standard">Standard</option>
-                <option value="outreach_ready">Outreach-ready (recommended)</option>
-                {restaurantProfileAvailable ? (
-                  <option value="restaurant_focused">Restaurant-focused</option>
-                ) : null}
-              </select>
-            </label>
-            <label className="flex flex-col gap-2">
+          <div className="flex w-full flex-wrap items-end gap-3 xl:w-auto xl:justify-end">
+            <label className="flex w-full flex-col gap-2 sm:w-[210px]">
               <span className="app-label text-xs">Export filter</span>
               <select value={exportFilter} onChange={(event) => setExportFilter(event.target.value as LeadExportFilter)} className="app-input h-11">
                 {exportFilterOptions.map((option) => (
@@ -2340,7 +2288,7 @@ export default function LeadsTable() {
           </label>
 
           <label className="app-filter-field">
-            <span className="app-label">Contactability</span>
+            <span className="app-label">Contact options</span>
             <select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as ContactFilter)} className="app-select">
               {contactFilterPills.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -2381,7 +2329,7 @@ export default function LeadsTable() {
             <div>
               <p className="text-sm font-semibold text-[var(--text-primary)]">{selectedIds.length} selected</p>
               <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                {selectedEmailEligibleCount} need email research · {selectedDecisionMakerEligibleCount} need decision-maker research
+                {selectedEmailEligibleCount} need email research · {selectedDecisionMakerEligibleCount} need contact-person research
               </p>
             </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end">
@@ -2402,7 +2350,7 @@ export default function LeadsTable() {
                   className="btn-secondary h-10 justify-center whitespace-nowrap px-3 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <UserSearch className="h-4 w-4" />
-                  Find decision-makers ({selectedIds.length})
+                  Find contact people ({selectedIds.length})
                 </button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -2449,12 +2397,12 @@ export default function LeadsTable() {
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-[var(--text-primary)]">
-                    {bulkProgress.type === "email" ? "Finding emails" : "Researching decision-makers"}: {Math.min(bulkProgress.completed, bulkProgress.total)} of {bulkProgress.total}
+                    {bulkProgress.type === "email" ? "Finding emails" : "Researching contact people"}: {Math.min(bulkProgress.completed, bulkProgress.total)} of {bulkProgress.total}
                   </p>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
                     {bulkProgress.type === "email"
                       ? `${bulkProgress.found} found · ${bulkProgress.notFound} no public email · ${bulkProgress.failed} failed · ${bulkProgress.skipped} skipped · ${Math.max(0, bulkProgress.total - bulkProgress.completed)} remaining`
-                      : `${bulkProgress.found} candidates found · ${bulkProgress.notFound} no reliable candidate · ${bulkProgress.failed} failed · ${bulkProgress.skipped} skipped · ${Math.max(0, bulkProgress.total - bulkProgress.completed)} remaining`}
+                      : `${bulkProgress.found} found · ${bulkProgress.notFound} no reliable contact person · ${bulkProgress.failed} failed · ${bulkProgress.skipped} skipped · ${Math.max(0, bulkProgress.total - bulkProgress.completed)} remaining`}
                   </p>
                 </div>
                 {bulkOperationActive ? (
@@ -2506,7 +2454,7 @@ export default function LeadsTable() {
                 <th className="px-4 py-3 font-medium">Lead</th>
                 <th className="px-4 py-3 font-medium">Contact</th>
                 <th className="px-4 py-3 font-medium">Email</th>
-                <th className="px-4 py-3 font-medium">Decision-maker / outreach</th>
+                <th className="px-4 py-3 font-medium">Contact person</th>
                 <th className="px-4 py-3 font-medium">Date</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
