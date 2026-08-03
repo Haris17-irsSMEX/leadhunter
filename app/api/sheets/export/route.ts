@@ -3,7 +3,6 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
-import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { exportLeadsToSheet, GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import type { Lead } from "@/lib/types";
@@ -15,7 +14,7 @@ function sheetsConfigError() {
   return NextResponse.json(
     {
       error: "Google Sheets not configured",
-      message: "Add GOOGLE_CREDENTIALS_B64 to .env.local",
+      message: "Google Sheets sync is not configured for this workspace.",
     },
     { status: 503 },
   );
@@ -35,12 +34,11 @@ export async function POST(request: NextRequest) {
       count?: number;
       sheetName?: string;
       syncFilter?: string;
-      exportProfile?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
+    // Legacy exportProfile values are accepted in old request bodies but intentionally ignored.
     const mode = body.mode ?? (Array.isArray(body.leadIds) && body.leadIds.length > 0 ? "selected" : "recent");
     const syncFilter = normalizeLeadExportFilter(body.syncFilter);
-    const exportProfile = normalizeLeadExportProfile(body.exportProfile);
     const selectedLeadIds = [...new Set(
       (body.leadIds ?? [])
         .filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
@@ -89,7 +87,10 @@ export async function POST(request: NextRequest) {
       throw new Error(error.message);
     }
     if (mode === "selected" && (data?.length ?? 0) !== selectedLeadIds.length) {
-      return NextResponse.json({ error: "One or more selected leads could not be synced." }, { status: 404 });
+      return NextResponse.json(
+        { error: "Some selected leads could not be verified as belonging to your workspace." },
+        { status: 404 },
+      );
     }
 
     const filtered = applyLeadExportFilter((data ?? []) as Lead[], syncFilter);
@@ -101,8 +102,8 @@ export async function POST(request: NextRequest) {
     const leads = await attachDecisionMakers(filtered);
     const result =
       mode === "all"
-        ? await syncLeadsToSheet(spreadsheetId, leads, sheetName, exportProfile)
-        : await exportLeadsToSheet(spreadsheetId, leads, sheetName, exportProfile);
+        ? await syncLeadsToSheet(spreadsheetId, leads, sheetName)
+        : await exportLeadsToSheet(spreadsheetId, leads, sheetName);
 
     return NextResponse.json(result);
   } catch (error) {

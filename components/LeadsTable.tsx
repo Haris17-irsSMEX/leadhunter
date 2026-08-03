@@ -2625,8 +2625,6 @@ export default function LeadsTable() {
         selectedIds={selectedIds}
         totalLeads={total}
         defaultSyncFilter={exportFilter}
-        defaultExportProfile="standard"
-        restaurantProfileAvailable={restaurantProfileAvailable}
         onActionComplete={() => setSelectedIds([])}
       />
     </div>

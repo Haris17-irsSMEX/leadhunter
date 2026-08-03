@@ -35,7 +35,7 @@ export default function IntegrationsPage() {
                   </span>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-                  Sync filtered LeadHunter records to a Google Sheet you control.
+                  Sync filtered LeadHunter records into one clean 12-column business contact sheet.
                 </p>
               </div>
             </div>
@@ -109,6 +109,7 @@ export default function IntegrationsPage() {
                   "Google requires edit permission before an external service can write data.",
                   "The spreadsheet ID identifies the destination spreadsheet.",
                   "The sheet tab name identifies the destination tab.",
+                  "Each sync replaces that tab with LeadHunter's fixed business contact format.",
                   "LeadHunter only writes the leads you choose to sync.",
                 ].map((item) => (
                   <li key={item} className="flex gap-2.5">

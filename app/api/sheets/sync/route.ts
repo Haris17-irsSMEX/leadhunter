@@ -3,7 +3,6 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { getAllowedUserIds, requireUser } from "@/lib/auth";
 import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
-import { normalizeLeadExportProfile } from "@/lib/lead-export";
 import { GoogleSheetsNotConfiguredError, syncLeadsToSheet } from "@/lib/sheets";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import type { Lead } from "@/lib/types";
@@ -15,7 +14,7 @@ function sheetsConfigError() {
   return NextResponse.json(
     {
       error: "Google Sheets not configured",
-      message: "Add GOOGLE_CREDENTIALS_B64 to .env.local",
+      message: "Google Sheets sync is not configured for this workspace.",
     },
     { status: 503 },
   );
@@ -32,11 +31,10 @@ export async function POST(request: NextRequest) {
       spreadsheetId?: string;
       sheetName?: string;
       syncFilter?: string;
-      exportProfile?: string;
     };
     const spreadsheetId = body.spreadsheetId?.trim();
+    // Legacy exportProfile values are accepted in old request bodies but intentionally ignored.
     const syncFilter = normalizeLeadExportFilter(body.syncFilter);
-    const exportProfile = normalizeLeadExportProfile(body.exportProfile);
 
     if (!spreadsheetId) {
       return NextResponse.json({ error: "spreadsheetId is required." }, { status: 400 });
@@ -69,7 +67,6 @@ export async function POST(request: NextRequest) {
       spreadsheetId,
       leads,
       (body.sheetName?.trim() || "Leads").slice(0, 100),
-      exportProfile,
     );
 
     return NextResponse.json(result);

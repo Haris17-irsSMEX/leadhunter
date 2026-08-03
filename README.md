@@ -127,6 +127,8 @@ https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit
 ```
 
 The private `/integrations` page and Google Sheets sync modal contain the complete setup guide.
+Each sync replaces only the selected destination tab with LeadHunter's fixed 12-column business contact sheet;
+CSV and Excel export profiles remain separate.
 
 ## Plans and usage
 

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ExternalLink, FileSpreadsheet, Info, Loader2, X } from "lucide-react";
 import CopyButton from "@/components/CopyButton";
-import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { useToast } from "@/lib/useToast";
 
@@ -17,8 +16,6 @@ type Props = {
   selectedIds?: string[];
   totalLeads: number;
   defaultSyncFilter?: LeadExportFilter;
-  defaultExportProfile?: LeadExportProfile;
-  restaurantProfileAvailable?: boolean;
   onActionComplete?: () => void;
 };
 
@@ -72,20 +69,12 @@ const syncFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
   { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
 ];
 
-const exportProfileHelp: Record<LeadExportProfile, string> = {
-  standard: "Clean business contacts for general outreach.",
-  outreach_ready: "Includes decision-maker and suggested outreach fields.",
-  restaurant_focused: "Includes delivery-platform intelligence.",
-};
-
 export default function GoogleSheetsModal({
   open,
   onClose,
   selectedIds = [],
   totalLeads,
   defaultSyncFilter = "all",
-  defaultExportProfile = "standard",
-  restaurantProfileAvailable = false,
   onActionComplete,
 }: Props) {
   const { showToast } = useToast();
@@ -93,7 +82,6 @@ export default function GoogleSheetsModal({
   const [sheetName, setSheetName] = useState("Leads");
   const [mode, setMode] = useState<SheetMode>(selectedIds.length ? "selected" : "recent");
   const [syncFilter, setSyncFilter] = useState<LeadExportFilter>(defaultSyncFilter);
-  const [exportProfile, setExportProfile] = useState<LeadExportProfile>(defaultExportProfile);
   const [recentCount, setRecentCount] = useState(20);
   const [loadingMode, setLoadingMode] = useState<SheetMode | null>(null);
   const [error, setError] = useState("");
@@ -105,11 +93,10 @@ export default function GoogleSheetsModal({
     if (open) {
       setMode(selectedIds.length ? "selected" : "recent");
       setSyncFilter(defaultSyncFilter);
-      setExportProfile(defaultExportProfile);
       setError("");
       setSuccess(null);
     }
-  }, [defaultExportProfile, defaultSyncFilter, open, selectedIds.length]);
+  }, [defaultSyncFilter, open, selectedIds.length]);
 
   useEffect(() => {
     if (!open) {
@@ -178,7 +165,6 @@ export default function GoogleSheetsModal({
       leadIds: targetMode === "selected" ? selectedIds : undefined,
       count: targetMode === "recent" ? Math.min(Math.max(recentCount, 1), 500) : undefined,
       syncFilter,
-      exportProfile,
     };
 
     try {
@@ -198,7 +184,7 @@ export default function GoogleSheetsModal({
       const warnings = Array.isArray(payload.warnings) ? payload.warnings.map(String) : [];
 
       setSuccess({ rowsWritten, url, warnings });
-      showToast(`Google Sheets updated with ${rowsWritten} rows.`, "success");
+      showToast("Selected leads synced to Google Sheets.", "success");
       onActionComplete?.();
     } catch (exportError) {
       const message = exportError instanceof Error ? exportError.message : "Google Sheets sync failed.";
@@ -237,7 +223,7 @@ export default function GoogleSheetsModal({
             <div>
               <h2 id="sheets-modal-title" className="app-section-title">Sync to Google Sheets</h2>
               <p className="mt-1 text-sm text-[var(--text-secondary)]">Share your spreadsheet with LeadHunter, then choose what to sync.</p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">Google Sheets uses the same clean export columns as CSV and Excel.</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">LeadHunter syncs one clean business-contact format.</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="icon-button" aria-label="Close Google Sheets modal">
@@ -245,12 +231,12 @@ export default function GoogleSheetsModal({
           </button>
         </div>
 
-        <div className="mt-6 grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label="Google Sheets sync steps">
-          {["Share Sheet", "Sheet details", "Choose records", "Sync result"].map((step, index) => (
+        <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Google Sheets sync steps">
+          {["Share Sheet", "Choose destination", "Sync leads"].map((step, index) => (
             <div
               key={step}
               className={`rounded-xl border px-3 py-2 text-center text-xs font-semibold ${
-                success || (index < 3 && (spreadsheetId || index === 0))
+                index === 0 || (index === 1 && spreadsheetId) || (index === 2 && success)
                   ? "border-blue-200 bg-[var(--primary-soft)] text-[var(--accent)]"
                   : "border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-muted)]"
               }`}
@@ -296,7 +282,7 @@ export default function GoogleSheetsModal({
           </details>
 
           <label className="block">
-            <span className="app-label">2. Spreadsheet ID</span>
+            <span className="app-label">2. Destination spreadsheet</span>
             <input
               value={spreadsheetId}
               onChange={(event) => setSpreadsheetId(event.target.value)}
@@ -309,32 +295,19 @@ export default function GoogleSheetsModal({
           </label>
 
           <label className="block">
-            <span className="app-label">Sheet tab name</span>
+            <span className="app-label">Destination tab name</span>
             <input value={sheetName} onChange={(event) => setSheetName(event.target.value)} className="app-input mt-2 w-full" />
             <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
               The tab inside the spreadsheet where leads should be written, for example: Leads.
             </span>
           </label>
 
-          <label className="block">
-            <span className="app-label">3. Sheet format</span>
-            <select value={exportProfile} onChange={(event) => setExportProfile(event.target.value as LeadExportProfile)} className="app-input mt-2 w-full">
-              <option value="standard">Standard</option>
-              <option value="outreach_ready">Outreach-ready (recommended)</option>
-              {restaurantProfileAvailable ? (
-                <option value="restaurant_focused">Restaurant-focused</option>
-              ) : null}
-            </select>
-            <span className="mt-2 block text-xs leading-5 text-[var(--text-secondary)]">
-              {exportProfileHelp[exportProfile]}
-            </span>
-            <span className="mt-1 block text-xs leading-5 text-[var(--text-muted)]">
-              Each sync replaces this tab so old columns and formatting do not remain.
-            </span>
-          </label>
+          <div className="rounded-xl border border-blue-200 bg-[var(--primary-soft)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
+            LeadHunter will replace the selected tab with a clean 12-column business contact sheet.
+          </div>
 
           <label className="block">
-            <span className="app-label">4. Sync filter</span>
+            <span className="app-label">3. Choose leads to sync</span>
             <select value={syncFilter} onChange={(event) => setSyncFilter(event.target.value as LeadExportFilter)} className="app-input mt-2 w-full">
               {syncFilterOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -399,7 +372,8 @@ export default function GoogleSheetsModal({
           {success ? (
             <div className="app-alert app-alert-success">
               <div>
-                <p className="font-semibold">{success.rowsWritten} leads synced successfully.</p>
+                <p className="font-semibold">Selected leads synced to Google Sheets.</p>
+                <p className="mt-1 text-xs text-green-800">{success.rowsWritten} rows written. 12-column business contact format applied.</p>
                 {success.warnings.length ? <p className="mt-1 text-xs text-amber-800">{success.warnings.join(" ")}</p> : null}
                 {success.url ? (
                   <a href={success.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 font-semibold text-green-800 underline underline-offset-4">

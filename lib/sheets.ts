@@ -1,7 +1,11 @@
 import * as jose from "jose";
 import { createHash } from "node:crypto";
 import { PublicApiError } from "@/lib/api-errors";
-import { buildLeadExportTable, type LeadExportProfile } from "@/lib/lead-export";
+import {
+  buildGoogleSheetsTable,
+  GOOGLE_SHEETS_COLUMNS,
+  type GoogleSheetsColumn,
+} from "@/lib/google-sheets-schema";
 import { logWorkflowEvent } from "@/lib/operational-errors";
 import type { Lead } from "@/lib/types";
 import { acquireWorkloadLease } from "@/lib/workload-guards";
@@ -42,49 +46,7 @@ type SheetsExportResult = {
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const TOKEN_AUDIENCE = "https://oauth2.googleapis.com/token";
-const DEFAULT_SHEET_COLUMN_WIDTH = 180;
-const SHEET_COLUMN_WIDTHS: Record<string, number> = {
-  "Company Name": 260,
-  Website: 320,
-  "Best Contact Method": 180,
-  Contactability: 140,
-  "Public Email": 260,
-  "Email Source": 280,
-  "Email Confidence": 140,
-  "Contact Page URL": 320,
-  Phone: 150,
-  Location: 420,
-  Category: 260,
-  Source: 140,
-  "Scraped At": 170,
-  "Email Type": 160,
-  "Decision-Maker Name": 220,
-  "Decision-Maker Role": 190,
-  "Decision-Maker Confidence": 180,
-  "Verification Status": 170,
-  "Public Profile / Evidence URL": 360,
-  "Outreach Readiness Score": 180,
-  "Outreach Readiness Status": 190,
-  "Opportunity Reason": 420,
-  "Suggested Outreach Angle": 480,
-  "Uber Eats": 140,
-  "Uber Eats Menu URL": 320,
-  "Uber Eats Confidence": 180,
-  DoorDash: 140,
-  "DoorDash Menu URL": 320,
-  "DoorDash Confidence": 180,
-  Grubhub: 140,
-  "Grubhub Menu URL": 320,
-  "Grubhub Confidence": 180,
-  Deliveroo: 140,
-  "Deliveroo Menu URL": 320,
-  "Deliveroo Confidence": 180,
-  "Just Eat": 140,
-  "Just Eat Menu URL": 320,
-  "Just Eat Confidence": 180,
-  "Restaurant Enrichment": 190,
-  "Source URL": 360,
-};
+const FINAL_SHEET_COLUMN_COUNT = GOOGLE_SHEETS_COLUMNS.length;
 
 function getCredentials(): ResolvedGoogleCredentials {
   const b64 = process.env.GOOGLE_CREDENTIALS_B64;
@@ -295,6 +257,18 @@ async function resetLeadSheetFormatting(
             },
           },
           {
+            updateSheetProperties: {
+              properties: {
+                sheetId,
+                gridProperties: {
+                  frozenColumnCount: 0,
+                  frozenRowCount: 0,
+                },
+              },
+              fields: "gridProperties.frozenColumnCount,gridProperties.frozenRowCount",
+            },
+          },
+          {
             repeatCell: {
               range: {
                 sheetId,
@@ -303,8 +277,10 @@ async function resetLeadSheetFormatting(
               },
               cell: {
                 userEnteredFormat: {},
+                dataValidation: null,
+                note: null,
               },
-              fields: "userEnteredFormat",
+              fields: "userEnteredFormat,dataValidation,note",
             },
           },
           {
@@ -331,11 +307,10 @@ async function formatLeadSheet(
   token: string,
   spreadsheetId: string,
   sheetId: number,
-  headers: string[],
+  columns: readonly GoogleSheetsColumn[],
   rowCount: number,
 ) {
-  const columnCount = headers.length;
-  const bodyRowHeight = headers.includes("Suggested Outreach Angle") ? 48 : 32;
+  const columnCount = columns.length;
   const requests: Record<string, unknown>[] = [
     {
       updateSheetProperties: {
@@ -358,13 +333,23 @@ async function formatLeadSheet(
           endColumnIndex: columnCount,
         },
         cell: {
-          userEnteredFormat: {
-            backgroundColor: {
-              red: 0.078,
-              green: 0.388,
-              blue: 1,
-            },
-            horizontalAlignment: "LEFT",
+            userEnteredFormat: {
+              backgroundColor: {
+                red: 0.078,
+                green: 0.388,
+                blue: 1,
+              },
+              borders: {
+                bottom: {
+                  style: "SOLID_MEDIUM",
+                  color: {
+                    red: 0.055,
+                    green: 0.286,
+                    blue: 0.78,
+                  },
+                },
+              },
+              horizontalAlignment: "LEFT",
             verticalAlignment: "MIDDLE",
             wrapStrategy: "CLIP",
             textFormat: {
@@ -379,7 +364,7 @@ async function formatLeadSheet(
           },
         },
         fields:
-          "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
+          "userEnteredFormat(backgroundColor,borders,horizontalAlignment,verticalAlignment,wrapStrategy,textFormat)",
       },
     },
     {
@@ -414,12 +399,22 @@ async function formatLeadSheet(
               horizontalAlignment: "LEFT",
               verticalAlignment: "MIDDLE",
               wrapStrategy: "CLIP",
+              borders: {
+                bottom: {
+                  style: "SOLID",
+                  color: {
+                    red: 0.89,
+                    green: 0.92,
+                    blue: 0.96,
+                  },
+                },
+              },
               textFormat: {
                 fontSize: 10,
               },
             },
           },
-          fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy,textFormat.fontSize)",
+          fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy,borders,textFormat.fontSize)",
         },
       },
       {
@@ -431,7 +426,7 @@ async function formatLeadSheet(
             endIndex: rowCount,
           },
           properties: {
-            pixelSize: bodyRowHeight,
+            pixelSize: 40,
           },
           fields: "pixelSize",
         },
@@ -439,7 +434,7 @@ async function formatLeadSheet(
     );
   }
 
-  for (const [index, header] of headers.entries()) {
+  for (const [index, column] of columns.entries()) {
     requests.push({
       updateDimensionProperties: {
         range: {
@@ -449,7 +444,7 @@ async function formatLeadSheet(
           endIndex: index + 1,
         },
         properties: {
-          pixelSize: SHEET_COLUMN_WIDTHS[header] ?? DEFAULT_SHEET_COLUMN_WIDTH,
+          pixelSize: column.width,
         },
         fields: "pixelSize",
       },
@@ -457,9 +452,8 @@ async function formatLeadSheet(
   }
 
   if (rowCount > 1) {
-    for (const header of ["Opportunity Reason", "Suggested Outreach Angle"]) {
-      const index = headers.indexOf(header);
-      if (index === -1) continue;
+    for (const [index, column] of columns.entries()) {
+      if (column.wrapStrategy !== "WRAP") continue;
       requests.push({
         repeatCell: {
           range: {
@@ -475,6 +469,30 @@ async function formatLeadSheet(
             },
           },
           fields: "userEnteredFormat.wrapStrategy",
+        },
+      });
+    }
+
+    for (const [index, column] of columns.entries()) {
+      if (!column.plainText) continue;
+      requests.push({
+        repeatCell: {
+          range: {
+            sheetId,
+            startRowIndex: 1,
+            endRowIndex: rowCount,
+            startColumnIndex: index,
+            endColumnIndex: index + 1,
+          },
+          cell: {
+            userEnteredFormat: {
+              numberFormat: {
+                type: "TEXT",
+                pattern: "@",
+              },
+            },
+          },
+          fields: "userEnteredFormat.numberFormat",
         },
       });
     }
@@ -503,6 +521,60 @@ async function formatLeadSheet(
       body: JSON.stringify({ requests }),
     },
   );
+}
+
+async function applyLeadSheetHyperlinks(
+  token: string,
+  spreadsheetId: string,
+  sheetId: number,
+  columns: readonly GoogleSheetsColumn[],
+  rows: string[][],
+) {
+  if (!rows.length) return;
+
+  const hyperlinkColumns = columns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => column.hyperlink);
+
+  for (let offset = 0; offset < rows.length; offset += WORKLOAD_LIMITS.exports.googleSheetsBatchRows) {
+    const batch = rows.slice(offset, offset + WORKLOAD_LIMITS.exports.googleSheetsBatchRows);
+    const requests = hyperlinkColumns.map(({ index }) => ({
+      updateCells: {
+        range: {
+          sheetId,
+          startRowIndex: offset + 1,
+          endRowIndex: offset + batch.length + 1,
+          startColumnIndex: index,
+          endColumnIndex: index + 1,
+        },
+        rows: batch.map((row) => {
+          const value = row[index] ?? "";
+          return {
+            values: [
+              {
+                userEnteredValue: { stringValue: value },
+                userEnteredFormat: value
+                  ? { textFormat: { link: { uri: value } } }
+                  : { textFormat: {} },
+              },
+            ],
+          };
+        }),
+        fields: "userEnteredValue,userEnteredFormat.textFormat.link",
+      },
+    }));
+
+    if (!requests.length) return;
+    await sheetsRequest(
+      token,
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requests }),
+      },
+    );
+  }
 }
 
 function columnName(count: number) {
@@ -548,7 +620,6 @@ async function replaceLeadSheet(
   spreadsheetId: string,
   sheetName: string,
   leads: Lead[],
-  profile: LeadExportProfile,
 ) {
   const lockDigest = createHash("sha256")
     .update(`${spreadsheetId}|${sheetName.trim().toLowerCase()}`)
@@ -565,7 +636,7 @@ async function replaceLeadSheet(
   try {
     const token = await getAccessToken();
     const warnings: string[] = [];
-    const table = buildLeadExportTable(leads, profile);
+    const table = buildGoogleSheetsTable(leads);
     const { sheetId, columnCount: previousColumnCount, rowCount: gridRowCount } = await getOrCreateSheet(
       token,
       spreadsheetId,
@@ -580,7 +651,7 @@ async function replaceLeadSheet(
       warnings.push(formattingWarning(error));
     }
 
-    await resizeSheetColumns(token, spreadsheetId, sheetId, table.headers.length);
+    await resizeSheetColumns(token, spreadsheetId, sheetId, FINAL_SHEET_COLUMN_COUNT);
 
     const endColumn = columnName(table.headers.length);
     await updateValues(token, spreadsheetId, sheetName, `A1:${endColumn}1`, [table.headers]);
@@ -592,7 +663,8 @@ async function replaceLeadSheet(
     }
 
     try {
-      await formatLeadSheet(token, spreadsheetId, sheetId, table.headers, table.rows.length + 1);
+      await formatLeadSheet(token, spreadsheetId, sheetId, table.columns, table.rows.length + 1);
+      await applyLeadSheetHyperlinks(token, spreadsheetId, sheetId, table.columns, table.rows);
     } catch (error) {
       warnings.push(formattingWarning(error));
     }
@@ -600,7 +672,7 @@ async function replaceLeadSheet(
     logWorkflowEvent("google-sheets", "replace complete", {
       rows: table.rows.length,
       columns: table.headers.length,
-      profile,
+      schema: "business_contacts_v1",
       batches: Math.ceil(table.rows.length / WORKLOAD_LIMITS.exports.googleSheetsBatchRows),
     });
     return warnings;
@@ -613,9 +685,8 @@ export async function exportLeadsToSheet(
   spreadsheetId: string,
   leads: Lead[],
   sheetName = "Leads",
-  profile: LeadExportProfile = "standard",
 ): Promise<SheetsExportResult> {
-  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads, profile);
+  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads);
 
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
@@ -628,9 +699,8 @@ export async function syncLeadsToSheet(
   spreadsheetId: string,
   leads: Lead[],
   sheetName = "Leads",
-  profile: LeadExportProfile = "standard",
 ): Promise<SheetsExportResult> {
-  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads, profile);
+  const warnings = await replaceLeadSheet(spreadsheetId, sheetName, leads);
 
   return {
     spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
