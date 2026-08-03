@@ -115,6 +115,18 @@ async function runWithConcurrency<T>(
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, runWorker));
 }
 
+function isInteractiveElement(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return Boolean(
+    target.closest(
+      'button, a, input, textarea, select, summary, [role="menu"], [role="menuitem"], [data-no-row-toggle="true"]',
+    ),
+  );
+}
+
 function emailSearchFeedback(previousLead: Lead | undefined, payload: EmailEnrichmentPayload): EmailSearchFeedback {
   const previousEmail = cleanSafePublicEmail(previousLead?.email);
   const resultEmail = cleanSafePublicEmail(payload.email);
@@ -480,6 +492,7 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
       href={href}
       target="_blank"
       rel="noopener noreferrer"
+      data-no-row-toggle="true"
       className={`inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-[var(--primary-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--accent)] transition hover:bg-blue-100 ${className}`}
     >
       {label}
@@ -796,28 +809,48 @@ function ProfessionalLeadRow({
 
   return (
     <>
-      <tr className="border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)]">
-        <td className="w-[40px] px-4 py-5 align-top">
+      <tr
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-controls={detailsPanelId}
+        aria-label={`${isExpanded ? "Close" : "Open"} ${lead.company_name} details`}
+        onClick={(event) => {
+          if (isInteractiveElement(event.target)) {
+            return;
+          }
+
+          closeMenu();
+          onToggleExpand();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+
+          if (isInteractiveElement(event.target)) {
+            return;
+          }
+
+          event.preventDefault();
+          closeMenu();
+          onToggleExpand();
+        }}
+        className={`group cursor-pointer border-b border-[var(--border)] text-[var(--text-primary)] transition hover:bg-[var(--surface-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset ${isExpanded ? "bg-[var(--surface-secondary)]" : ""}`}
+      >
+        <td className="w-[40px] px-4 py-5 align-top" onClick={(event) => event.stopPropagation()}>
           <input
             type="checkbox"
             checked={isSelected}
             onChange={(event) => onToggleSelect(event.target.checked)}
+            onClick={(event) => event.stopPropagation()}
             className="app-checkbox"
             aria-label={`Select ${lead.company_name}`}
+            data-no-row-toggle="true"
           />
         </td>
         <td className="px-4 py-5 align-top">
-          <button
-            type="button"
-            onClick={() => {
-              closeMenu();
-              onToggleExpand();
-            }}
-            aria-expanded={isExpanded}
-            aria-controls={detailsPanelId}
-            aria-label={`${isExpanded ? "Close" : "Open"} ${lead.company_name} details`}
-            className="-m-2 block min-h-[92px] w-[calc(100%+1rem)] cursor-pointer rounded-xl p-2 text-left transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
-          >
+          <div className="-m-2 block min-h-[92px] w-[calc(100%+1rem)] rounded-xl p-2 text-left transition group-hover:bg-[var(--primary-soft)]">
             <span className="block min-w-0">
               <span className="flex flex-wrap items-center gap-2">
                 <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
@@ -833,7 +866,7 @@ function ProfessionalLeadRow({
                 </span>
               ) : null}
             </span>
-          </button>
+          </div>
         </td>
         <td className="px-4 py-5 align-top">
           <div className="space-y-1 text-sm">
@@ -875,17 +908,21 @@ function ProfessionalLeadRow({
         <td className="px-4 py-5 align-top text-sm text-[var(--text-secondary)]">
           <span className="block w-[112px] whitespace-nowrap">{formatRelative(lead.scraped_at)}</span>
         </td>
-        <td className="px-3 py-5 align-top">
+        <td className="px-3 py-5 align-top" onClick={(event) => event.stopPropagation()}>
           <div ref={menuContainerRef} className="relative flex items-center justify-end">
             <button
               type="button"
               ref={menuButtonRef}
-              onClick={() => setMenuOpen((current) => !current)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuOpen((current) => !current);
+              }}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
               aria-controls={`lead-actions-${domRowId}`}
               aria-label={`More actions for ${lead.company_name}`}
               className="icon-button h-9 w-9"
+              data-no-row-toggle="true"
             >
               <MoreHorizontal className="h-4 w-4" />
             </button>
@@ -893,41 +930,42 @@ function ProfessionalLeadRow({
               <div
                 id={`lead-actions-${domRowId}`}
                 role="menu"
+                onClick={(event) => event.stopPropagation()}
                 className="absolute right-0 top-10 z-30 w-64 rounded-xl border border-[var(--border-default)] bg-white p-1.5 text-left shadow-[var(--shadow-elevated)]"
               >
                 {lead.website ? (
-                  <a href={lead.website} target="_blank" rel="noopener noreferrer" role="menuitem" onClick={closeMenu} className="block rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <a href={lead.website} target="_blank" rel="noopener noreferrer" role="menuitem" data-no-row-toggle="true" onClick={() => closeMenu()} className="block rounded-lg px-3 py-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Open website
                   </a>
                 ) : null}
-                <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyBusinessName(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                <button type="button" role="menuitem" data-no-row-toggle="true" onClick={() => { closeMenu(); onCopyBusinessName(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                   Copy business name
                 </button>
                 {lead.website ? (
-                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyWebsite(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" data-no-row-toggle="true" onClick={() => { closeMenu(); onCopyWebsite(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy website
                   </button>
                 ) : null}
                 {lead.phone ? (
-                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyPhone(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" data-no-row-toggle="true" onClick={() => { closeMenu(); onCopyPhone(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy phone
                   </button>
                 ) : null}
                 {safeEmail ? (
-                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onCopyEmail(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                  <button type="button" role="menuitem" data-no-row-toggle="true" onClick={() => { closeMenu(); onCopyEmail(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
                     Copy email
                   </button>
                 ) : null}
                 {canFindEmail || safeEmail ? (
-                  <button type="button" role="menuitem" disabled={isEnriching || (!safeEmail && !canFindEmail)} onClick={() => { closeMenu(); onEnrichEmail(Boolean(safeEmail)); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                  <button type="button" role="menuitem" data-no-row-toggle="true" disabled={isEnriching || (!safeEmail && !canFindEmail)} onClick={() => { closeMenu(); onEnrichEmail(Boolean(safeEmail)); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
                     {isEnriching ? "Finding email..." : emailActionLabel}
                   </button>
                 ) : null}
-                <button type="button" role="menuitem" disabled={isResearchingDecisionMaker} onClick={() => { closeMenu(); onResearchDecisionMaker(decisionMakerCandidateExists); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
+                <button type="button" role="menuitem" data-no-row-toggle="true" disabled={isResearchingDecisionMaker} onClick={() => { closeMenu(); onResearchDecisionMaker(decisionMakerCandidateExists); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--accent)] hover:bg-[var(--primary-soft)] disabled:opacity-50">
                   {isResearchingDecisionMaker ? "Researching..." : decisionMakerActionLabel}
                 </button>
                 <div className="mt-1 border-t border-[var(--border-default)] pt-1">
-                  <button type="button" role="menuitem" onClick={() => { closeMenu(); onDelete(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
+                  <button type="button" role="menuitem" data-no-row-toggle="true" onClick={() => { closeMenu(); onDelete(); }} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-semibold text-[var(--danger)] hover:bg-[var(--danger-soft)]">
                     Delete lead
                   </button>
                 </div>
@@ -1521,6 +1559,10 @@ export default function LeadsTable() {
     setWebsiteStatusFilter("all");
     setRestaurantEnrichmentFilter("all");
     setContactFilter("all");
+  }
+
+  function toggleLeadDetails(leadId: string) {
+    setExpandedLeadId((current) => (current === leadId ? null : leadId));
   }
 
   function removeDeleted(ids: string[]) {
@@ -2492,7 +2534,7 @@ export default function LeadsTable() {
                       rowId={rowId}
                       isExpanded={expandedLeadId === rowId}
                       isSelected={lead.id ? selectedIds.includes(lead.id) : false}
-                      onToggleExpand={() => setExpandedLeadId(expandedLeadId === rowId ? null : rowId)}
+                      onToggleExpand={() => toggleLeadDetails(rowId)}
                       onToggleSelect={(checked) => {
                         if (lead.id) {
                           handleSelectOne(lead.id, checked);
