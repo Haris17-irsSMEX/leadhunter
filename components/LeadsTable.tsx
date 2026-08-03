@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronUp, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, UserSearch, Users } from "lucide-react";
+import { ChevronDown, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
 import {
   getBestContactMethod,
@@ -818,25 +818,20 @@ function ProfessionalLeadRow({
             aria-label={`${isExpanded ? "Close" : "Open"} ${lead.company_name} details`}
             className="-m-2 block min-h-[92px] w-[calc(100%+1rem)] cursor-pointer rounded-xl p-2 text-left transition hover:bg-[var(--primary-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2"
           >
-            <span className="flex items-start justify-between gap-3">
-              <span className="min-w-0">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
-                  <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
-                    {sourceLabel(lead.source)}
-                  </span>
+            <span className="block min-w-0">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="max-w-[340px] truncate text-sm font-semibold text-[var(--text-primary)]">{lead.company_name}</span>
+                <span className={`status-badge px-2.5 py-1 text-[11px] ${sourceBadgeClass(lead.source)}`}>
+                  {sourceLabel(lead.source)}
                 </span>
-                <span className={lead.website ? "mt-2 block truncate text-xs text-[var(--text-secondary)]" : "mt-2 block text-xs text-[var(--text-muted)]"}>{websiteLabel}</span>
-                {industry.visible ? (
-                  <span className="mt-2 block max-w-[360px] truncate text-xs text-[var(--text-muted)]">
-                    {industry.visible}
-                    {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
-                  </span>
-                ) : null}
               </span>
-              <span className="mt-0.5 shrink-0 rounded-full border border-[var(--border-default)] bg-white p-1 text-[var(--text-muted)]">
-                {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-              </span>
+              <span className={lead.website ? "mt-2 block truncate text-xs text-[var(--text-secondary)]" : "mt-2 block text-xs text-[var(--text-muted)]"}>{websiteLabel}</span>
+              {industry.visible ? (
+                <span className="mt-2 block max-w-[360px] truncate text-xs text-[var(--text-muted)]">
+                  {industry.visible}
+                  {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
+                </span>
+              ) : null}
             </span>
           </button>
         </td>
