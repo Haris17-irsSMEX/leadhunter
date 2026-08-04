@@ -2098,7 +2098,7 @@ export default function LeadsTable() {
     <div className="space-y-5">
       <header className="app-page-header">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3">
               <h1 className="app-page-title">My Leads</h1>
               <span className="status-badge status-badge-info">
@@ -2107,7 +2107,7 @@ export default function LeadsTable() {
             </div>
             <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
-          <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:justify-end xl:w-auto">
+          <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:justify-end xl:ml-auto xl:w-auto xl:justify-end">
             <button type="button" onClick={() => setExportModal({ format: "csv", initialScope: "recent" })} className="btn-primary h-11 self-end justify-center whitespace-nowrap">
               <Download className="h-4 w-4" />
               Export to CSV
