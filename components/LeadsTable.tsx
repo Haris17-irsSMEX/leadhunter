@@ -23,6 +23,7 @@ import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
 const DEFAULT_EXPORT_PROFILE: LeadExportProfile = "standard";
+const DEFAULT_EXPORT_FILTER: LeadExportFilter = "all";
 
 const deliveryPlatforms: Array<{ label: string; value: DeliveryPlatformId }> = [
   { label: "Uber Eats", value: "ubereats" },
@@ -1340,7 +1341,6 @@ export default function LeadsTable() {
   const [copyMessage, setCopyMessage] = useState("");
   const [showSheetModal, setShowSheetModal] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportFilter, setExportFilter] = useState<LeadExportFilter>("all");
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
@@ -2105,7 +2105,7 @@ export default function LeadsTable() {
     setExporting(true);
 
     try {
-      const response = await fetch(buildExportUrl(ids, format, exportFilter, DEFAULT_EXPORT_PROFILE), { cache: "no-store" });
+      const response = await fetch(buildExportUrl(ids, format, DEFAULT_EXPORT_FILTER, DEFAULT_EXPORT_PROFILE), { cache: "no-store" });
 
       if (!response.ok) {
         const payload = await parseResponseSafely(response);
@@ -2163,24 +2163,6 @@ export default function LeadsTable() {
     { label: "No public email", value: "no_public_email" },
     { label: "Not contactable", value: "not_contactable" },
   ];
-  const exportFilterOptions: Array<{ label: string; value: LeadExportFilter }> = [
-    { label: "All leads", value: "all" },
-    { label: "Contactable leads", value: "contactable" },
-    { label: "Email found", value: "email_found" },
-    { label: "Contact page found", value: "contact_page_found" },
-    { label: "Phone found", value: "phone_found" },
-    { label: "No public email", value: "no_public_email" },
-    { label: "Not contactable", value: "not_contactable" },
-    { label: "Has public email", value: "has_public_email" },
-    { label: "Any delivery platform found", value: "any_delivery_found" },
-    { label: "Uber Eats found", value: "ubereats_found" },
-    { label: "DoorDash found", value: "doordash_found" },
-    { label: "Grubhub found", value: "grubhub_found" },
-    { label: "Deliveroo found", value: "deliveroo_found" },
-    { label: "Just Eat found", value: "justeat_found" },
-    { label: "Uber Eats or DoorDash found", value: "ubereats_or_doordash_found" },
-  ];
-
   return (
     <div className="space-y-5">
       <header className="app-page-header">
@@ -2194,17 +2176,7 @@ export default function LeadsTable() {
             </div>
             <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
-          <div className="flex w-full flex-wrap items-end gap-3 xl:w-auto xl:justify-end">
-            <label className="flex w-full flex-col gap-2 sm:w-[210px]">
-              <span className="app-label text-xs">Export filter</span>
-              <select value={exportFilter} onChange={(event) => setExportFilter(event.target.value as LeadExportFilter)} className="app-input h-11">
-                {exportFilterOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:justify-end xl:w-auto">
             <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
               <Download className="h-4 w-4" />
               {exporting ? "Exporting..." : "Export to CSV"}
@@ -2572,7 +2544,7 @@ export default function LeadsTable() {
         onClose={() => setShowSheetModal(false)}
         selectedIds={selectedIds}
         totalLeads={total}
-        defaultSyncFilter={exportFilter}
+        defaultSyncFilter={DEFAULT_EXPORT_FILTER}
         onActionComplete={() => setSelectedIds([])}
       />
     </div>
