@@ -1279,7 +1279,7 @@ export default function FinderPage() {
                   onClick={() => setDiscoveryMode("city_scan")}
                   className={mapsDiscoveryMode === "city_scan" ? "option-card option-card-active text-left" : "option-card text-left"}
                 >
-                  <span className="block font-semibold">City Opportunity Scan</span>
+                  <span className="block font-semibold">No-Website Businesses</span>
                   <span className="mt-1 block text-xs leading-5 text-[var(--text-secondary)]">Discover businesses across a city that do not have a website listed.</span>
                 </button>
               </div>
@@ -1366,9 +1366,9 @@ export default function FinderPage() {
               <section className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4 sm:p-6">
                 <div>
                   <p className="app-label text-[var(--accent)]">City scan setup</p>
-                  <h2 className="mt-1 app-section-title">Discover no-website opportunities</h2>
+                  <h2 className="mt-1 app-section-title">Find no-website businesses</h2>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--text-secondary)]">
-                    City Opportunity Scan searches multiple zones and supported categories. Results represent discovered opportunities and may not include every business in the city.
+                    LeadHunter scans city areas and supported categories to find businesses with no website listed on Google Maps.
                   </p>
                 </div>
                 <div className="mt-5 grid gap-4 lg:grid-cols-[1.4fr_190px_190px_auto] lg:items-start">
@@ -1418,7 +1418,7 @@ export default function FinderPage() {
                     className="btn-primary h-11 justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60 lg:mt-[29px]"
                   >
                     {cityScanRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <MapPin className="h-4 w-4" />}
-                    {cityScanRunning ? "Scanning city..." : "Start city scan"}
+                    {cityScanRunning ? "Scanning city..." : "Find no-website businesses"}
                   </button>
                 </div>
 
