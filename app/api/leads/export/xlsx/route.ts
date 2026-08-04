@@ -4,7 +4,7 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { requireUser } from "@/lib/auth";
 import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
-import { buildLeadExportTable, normalizeLeadExportProfile } from "@/lib/lead-export";
+import { buildGoogleSheetsTable } from "@/lib/google-sheets-schema";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { resolveLeadExportScope } from "@/lib/lead-export-scope";
 import { logWorkflowEvent } from "@/lib/operational-errors";
@@ -25,11 +25,25 @@ function isHttpUrl(value: string) {
   }
 }
 
+const excelColumnWidths: Record<string, number> = {
+  "Business Name": 32,
+  Website: 30,
+  "Best Contact Method": 22,
+  "Business Email": 30,
+  "Email Source": 34,
+  Phone: 18,
+  "Contact Page URL": 34,
+  "Contact Person Name": 26,
+  "Contact Person Role": 22,
+  "Public Profile / Evidence": 36,
+  Location: 38,
+  "Scraped At": 22,
+};
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
     const exportFilter = normalizeLeadExportFilter(request.nextUrl.searchParams.get("export_filter"));
-    const profile = normalizeLeadExportProfile(request.nextUrl.searchParams.get("profile"));
     const supabase = getSupabaseServiceClient();
     const exportScope = await resolveLeadExportScope({ requestUrl: request.nextUrl, supabase, user });
 
@@ -39,9 +53,9 @@ export async function GET(request: NextRequest) {
     }
 
     const leads = await attachDecisionMakers(filtered);
-    const table = buildLeadExportTable(leads, profile);
+    const table = buildGoogleSheetsTable(leads);
     logWorkflowEvent("lead-export", "xlsx generated", {
-      profile,
+      schema: "business-contact-12-column",
       scope: exportScope.scope,
       rows: table.rows.length,
       columns: table.headers.length,
@@ -74,9 +88,9 @@ export async function GET(request: NextRequest) {
     worksheet["!cols"] = table.columns.map((column, index) => {
       const contentWidth = table.rows.reduce(
         (max, row) => Math.max(max, String(row[index] ?? "").length),
-        column.label.length,
+        column.header.length,
       );
-      return { wch: Math.min(48, Math.max(column.width, contentWidth + 2)) };
+      return { wch: Math.min(48, Math.max(excelColumnWidths[column.header] ?? 22, contentWidth + 2)) };
     });
     worksheet["!autofilter"] = {
       ref: worksheet["!ref"] ?? `A1:${XLSX.utils.encode_col(table.headers.length - 1)}1`,
