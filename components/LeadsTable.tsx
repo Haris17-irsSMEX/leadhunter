@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChevronDown, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Mail, MoreHorizontal, Search, UserSearch, Users } from "lucide-react";
 import GoogleSheetsModal from "@/components/GoogleSheetsModal";
+import LeadExportModal, { type LeadExportFormat } from "@/components/LeadExportModal";
 import {
   getBestContactMethod,
   getContactPageUrl,
@@ -13,7 +14,6 @@ import {
 } from "@/lib/contactability";
 import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
-import type { LeadExportProfile } from "@/lib/lead-export";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { getCleanCategoryLabels } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
@@ -22,7 +22,6 @@ import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
 const PAGE_SIZE = 50;
-const DEFAULT_EXPORT_PROFILE: LeadExportProfile = "standard";
 const DEFAULT_EXPORT_FILTER: LeadExportFilter = "all";
 
 const deliveryPlatforms: Array<{ label: string; value: DeliveryPlatformId }> = [
@@ -73,6 +72,10 @@ type BulkProgress = {
   failed: number;
   skipped: number;
   stopped: boolean;
+};
+type ExportModalState = {
+  format: LeadExportFormat;
+  initialScope: "selected" | "recent";
 };
 type DecisionMakerResearchPayload = {
   lead?: Lead;
@@ -407,53 +410,6 @@ function industryPreview(industry?: string) {
     visible: tags.slice(0, 2).join(", "),
     more: Math.max(0, tags.length - 2),
   };
-}
-
-function buildExportUrl(
-  ids: string[],
-  format: "csv" | "xlsx",
-  exportFilter: LeadExportFilter,
-  exportProfile: LeadExportProfile,
-) {
-  const base = format === "xlsx" ? "/api/leads/export/xlsx" : "/api/leads/export";
-  const query = new URLSearchParams();
-
-  if (ids.length) {
-    query.set("ids", ids.join(","));
-  }
-
-  if (exportFilter !== "all") {
-    query.set("export_filter", exportFilter);
-  }
-  query.set("profile", exportProfile);
-
-  const search = query.toString();
-  return search ? `${base}?${search}` : base;
-}
-
-function triggerBlobDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function filenameFromDisposition(disposition: string | null, fallback: string) {
-  if (!disposition) {
-    return fallback;
-  }
-
-  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match?.[1]) {
-    return decodeURIComponent(utf8Match[1].replace(/"/g, ""));
-  }
-
-  const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  return filenameMatch?.[1] ?? fallback;
 }
 
 function statusBadge(label: string, status?: string) {
@@ -1340,7 +1296,7 @@ export default function LeadsTable() {
   const [error, setError] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
   const [showSheetModal, setShowSheetModal] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [exportModal, setExportModal] = useState<ExportModalState | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [enrichingIds, setEnrichingIds] = useState<string[]>([]);
   const enrichingLeadIdsRef = useRef(new Set<string>());
@@ -1489,7 +1445,6 @@ export default function LeadsTable() {
   );
   const selectedVisibleIds = selectableVisibleIds.filter((id) => selectedIds.includes(id));
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleIds.length === selectableVisibleIds.length;
-  const exportTargetIds = selectedIds.length ? selectedIds : selectableVisibleIds;
   const selectedLeadObjects = selectedIds
     .map((id) => leads.find((lead) => lead.id === id))
     .filter((lead): lead is Lead => Boolean(lead?.id));
@@ -2101,30 +2056,6 @@ export default function LeadsTable() {
     }
   }
 
-  async function handleExport(ids: string[], format: "csv" | "xlsx") {
-    setExporting(true);
-
-    try {
-      const response = await fetch(buildExportUrl(ids, format, DEFAULT_EXPORT_FILTER, DEFAULT_EXPORT_PROFILE), { cache: "no-store" });
-
-      if (!response.ok) {
-        const payload = await parseResponseSafely(response);
-        throw new Error(getApiErrorMessage(response, String(payload.error ?? `Lead ${format.toUpperCase()} export failed.`)));
-      }
-
-      const blob = await response.blob();
-      triggerBlobDownload(blob, filenameFromDisposition(response.headers.get("content-disposition"), format === "xlsx" ? "leads.xlsx" : "leads.csv"));
-      showToast(`${format.toUpperCase()} export complete.`, "success");
-    } catch (exportError) {
-      const message = exportError instanceof Error ? exportError.message : `Lead ${format.toUpperCase()} export failed.`;
-      console.error(exportError);
-      showToast(message, "error");
-      setError(message);
-    } finally {
-      setExporting(false);
-    }
-  }
-
   const sourcePills: Array<{ label: string; value: SourceFilter }> = [
     { label: "All", value: "all" },
     { label: "Google Maps", value: "google_maps" },
@@ -2177,13 +2108,13 @@ export default function LeadsTable() {
             <p className="mt-2 app-muted">Search, filter, export, and sync your saved leads.</p>
           </div>
           <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:justify-end xl:w-auto">
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "csv")} className="btn-primary h-11 self-end justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="button" onClick={() => setExportModal({ format: "csv", initialScope: "recent" })} className="btn-primary h-11 self-end justify-center whitespace-nowrap">
               <Download className="h-4 w-4" />
-              {exporting ? "Exporting..." : "Export to CSV"}
+              Export to CSV
             </button>
-            <button type="button" disabled={exporting} onClick={() => void handleExport(exportTargetIds, "xlsx")} className="btn-secondary h-11 self-end justify-center whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60">
+            <button type="button" onClick={() => setExportModal({ format: "xlsx", initialScope: "recent" })} className="btn-secondary h-11 self-end justify-center whitespace-nowrap">
               <Download className="h-4 w-4" />
-              {exporting ? "Exporting..." : "Export to Excel"}
+              Export to Excel
             </button>
             <button type="button" onClick={() => setShowSheetModal(true)} className="btn-secondary h-11 self-end justify-center whitespace-nowrap">
               <FileSpreadsheet className="h-4 w-4" />
@@ -2337,11 +2268,11 @@ export default function LeadsTable() {
                     <ChevronDown className="h-3.5 w-3.5" />
                   </summary>
                   <div className="absolute right-0 z-30 mt-2 w-44 rounded-xl border border-[var(--border-default)] bg-white p-1.5 shadow-[var(--shadow-elevated)]">
-                    <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "csv")} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] disabled:opacity-50">
-                      {exporting ? "Exporting..." : "Export to CSV"}
+                    <button type="button" onClick={() => setExportModal({ format: "csv", initialScope: "selected" })} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                      Export to CSV
                     </button>
-                    <button type="button" disabled={exporting} onClick={() => void handleExport(selectedIds, "xlsx")} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)] disabled:opacity-50">
-                      {exporting ? "Exporting..." : "Export to Excel"}
+                    <button type="button" onClick={() => setExportModal({ format: "xlsx", initialScope: "selected" })} className="block w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--surface-secondary)]">
+                      Export to Excel
                     </button>
                   </div>
                 </details>
@@ -2546,6 +2477,15 @@ export default function LeadsTable() {
         totalLeads={total}
         defaultSyncFilter={DEFAULT_EXPORT_FILTER}
         onActionComplete={() => setSelectedIds([])}
+      />
+      <LeadExportModal
+        open={exportModal !== null}
+        onClose={() => setExportModal(null)}
+        format={exportModal?.format ?? "csv"}
+        initialScope={exportModal?.initialScope ?? "recent"}
+        selectedLeadIds={selectedIds}
+        totalLeads={total}
+        exportFilter={DEFAULT_EXPORT_FILTER}
       />
     </div>
   );
