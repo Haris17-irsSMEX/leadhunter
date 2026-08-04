@@ -3,7 +3,7 @@ import { apiErrorResponse } from "@/lib/api-errors";
 import { requireUser } from "@/lib/auth";
 import { attachDecisionMakers } from "@/lib/decision-maker-db";
 import { getSupabaseServiceClient } from "@/lib/db";
-import { buildLeadExportTable, normalizeLeadExportProfile } from "@/lib/lead-export";
+import { buildGoogleSheetsTable } from "@/lib/google-sheets-schema";
 import { applyLeadExportFilter, normalizeLeadExportFilter } from "@/lib/lead-export-filters";
 import { resolveLeadExportScope } from "@/lib/lead-export-scope";
 import { logWorkflowEvent } from "@/lib/operational-errors";
@@ -24,7 +24,6 @@ export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
     const exportFilter = normalizeLeadExportFilter(request.nextUrl.searchParams.get("export_filter"));
-    const profile = normalizeLeadExportProfile(request.nextUrl.searchParams.get("profile"));
     const supabase = getSupabaseServiceClient();
     const exportScope = await resolveLeadExportScope({ requestUrl: request.nextUrl, supabase, user });
 
@@ -34,9 +33,9 @@ export async function GET(request: NextRequest) {
     }
 
     const leads = await attachDecisionMakers(filtered);
-    const table = buildLeadExportTable(leads, profile);
+    const table = buildGoogleSheetsTable(leads);
     logWorkflowEvent("lead-export", "csv generated", {
-      profile,
+      schema: "business-contact-12-column",
       scope: exportScope.scope,
       rows: table.rows.length,
       columns: table.headers.length,
