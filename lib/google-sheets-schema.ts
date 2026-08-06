@@ -245,7 +245,7 @@ export function buildGoogleSheetsTable(leads: Lead[]) {
   }
 
   const columns = shouldIncludeRestaurantDeliveryColumns(leads)
-    ? [...GOOGLE_SHEETS_COLUMNS, ...RESTAURANT_DELIVERY_COLUMNS]
+    ? [...GOOGLE_SHEETS_COLUMNS.slice(0, 10), ...RESTAURANT_DELIVERY_COLUMNS, ...GOOGLE_SHEETS_COLUMNS.slice(10)]
     : [...GOOGLE_SHEETS_COLUMNS];
   const headers = columns.map((column) => column.header);
   if (

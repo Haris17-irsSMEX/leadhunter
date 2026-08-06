@@ -16,13 +16,13 @@ import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { getCleanCategoryLabels } from "@/lib/lead-category";
+import { isRestaurantLead } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
 import {
   getFoundRestaurantDeliveryPlatforms,
-  getRestaurantDeliverySummary,
+  getRestaurantDeliveryCheckState,
   getRestaurantPlatformStatus as deliveryPlatformStatus,
   getSafeRestaurantPlatformUrl as deliveryPlatformMenuUrl,
-  isRestaurantDeliveryContext,
   restaurantDeliveryStatusLabel,
 } from "@/lib/restaurant-delivery";
 import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
@@ -472,12 +472,14 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
 }
 
 function hasDeliverySignal(lead: Lead) {
-  return isRestaurantDeliveryContext(lead);
+  return isRestaurantLead(lead);
 }
 
 function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
   const status = deliveryPlatformStatus(lead, platform);
   const menuUrl = deliveryPlatformMenuUrl(lead, platform);
+  const effectiveStatus = menuUrl ? "found" : status;
+  const effectiveLabel = menuUrl ? "Found" : deliveryStatusLabelForLead(lead, platform);
 
   return (
     <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-4">
@@ -485,10 +487,10 @@ function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: Delive
         <div>
           <p className="text-sm font-semibold text-[var(--text-primary)]">{deliveryPlatformLabel(platform)}</p>
         </div>
-        {statusBadge(deliveryStatusLabelForLead(lead, platform), status)}
+        {statusBadge(effectiveLabel, effectiveStatus)}
       </div>
       <div className="mt-4">
-        <SmartLink href={menuUrl} label={displayShortUrl(menuUrl) || "Open listing"} />
+        <SmartLink href={menuUrl} label="Open listing" />
       </div>
     </div>
   );
@@ -516,14 +518,46 @@ function deliveryPlatformLabel(platform: DeliveryPlatformId) {
   return deliveryPlatforms.find((item) => item.value === platform)?.label ?? platform;
 }
 
-function collapsedDeliverySummary(lead: Lead) {
+function deliveryPillClass(tone: "success" | "muted" | "warning" | "danger") {
+  if (tone === "success") return "border-[var(--success-border)] bg-[var(--success-soft)] text-green-700";
+  if (tone === "warning") return "border-[var(--warning-border)] bg-[var(--warning-soft)] text-amber-800";
+  if (tone === "danger") return "border-[var(--danger-border)] bg-[var(--danger-soft)] text-[var(--danger)]";
+  return "border-[var(--border-default)] bg-[var(--surface-secondary)] text-[var(--text-secondary)]";
+}
+
+function CollapsedDeliveryPresence({ lead }: { lead: Lead }) {
   const found = getFoundRestaurantDeliveryPlatforms(lead);
-  if (found.length) return `Delivery: ${found.map(({ label }) => label).join(" · ")}`;
-  const summary = getRestaurantDeliverySummary(lead);
-  if (summary === "None found") return "No delivery platforms found";
-  if (summary === "Partial check") return "Delivery check partial";
-  if (summary === "Check failed") return "Delivery check failed";
-  return "Delivery not checked";
+
+  if (found.length) {
+    return (
+      <span className="mt-2 block max-w-[360px]">
+        <span className="app-label block text-[10px]">Delivery platforms</span>
+        <span className="mt-1 flex flex-wrap gap-1.5">
+          {found.map(({ id, label }) => (
+            <span key={id} className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${deliveryPillClass("success")}`}>
+              {label}
+            </span>
+          ))}
+        </span>
+      </span>
+    );
+  }
+
+  const state = getRestaurantDeliveryCheckState(lead);
+  const config =
+    state === "complete"
+      ? { label: "No platforms found", tone: "muted" as const }
+      : state === "partial"
+        ? { label: "Delivery check partial", tone: "warning" as const }
+        : state === "failed"
+          ? { label: "Delivery check failed", tone: "danger" as const }
+          : { label: "Delivery not checked", tone: "muted" as const };
+
+  return (
+    <span className={`mt-2 inline-flex max-w-full rounded-full border px-2 py-0.5 text-[11px] font-semibold ${deliveryPillClass(config.tone)}`}>
+      {config.label}
+    </span>
+  );
 }
 
 function needsEmailEnrichment(lead: Lead) {
@@ -774,9 +808,7 @@ function ProfessionalLeadRow({
                 </span>
               ) : null}
               {showDeliveryIntelligence ? (
-                <span className="mt-2 block max-w-[360px] truncate text-xs font-medium text-[var(--text-secondary)]">
-                  {collapsedDeliverySummary(lead)}
-                </span>
+                <CollapsedDeliveryPresence lead={lead} />
               ) : null}
             </span>
           </div>
