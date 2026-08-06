@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import { PublicApiError } from "@/lib/api-errors";
 import {
   buildGoogleSheetsTable,
-  GOOGLE_SHEETS_COLUMNS,
   type GoogleSheetsColumn,
 } from "@/lib/google-sheets-schema";
 import { logWorkflowEvent } from "@/lib/operational-errors";
@@ -46,7 +45,6 @@ type SheetsExportResult = {
 
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 const TOKEN_AUDIENCE = "https://oauth2.googleapis.com/token";
-const FINAL_SHEET_COLUMN_COUNT = GOOGLE_SHEETS_COLUMNS.length;
 
 function getCredentials(): ResolvedGoogleCredentials {
   const b64 = process.env.GOOGLE_CREDENTIALS_B64;
@@ -549,11 +547,12 @@ async function applyLeadSheetHyperlinks(
         },
         rows: batch.map((row) => {
           const value = row[index] ?? "";
+          const hyperlink = isPublicHttpUrl(value);
           return {
             values: [
               {
                 userEnteredValue: { stringValue: value },
-                userEnteredFormat: value
+                userEnteredFormat: hyperlink
                   ? { textFormat: { link: { uri: value } } }
                   : { textFormat: {} },
               },
@@ -586,6 +585,15 @@ function columnName(count: number) {
     value = Math.floor(value / 26);
   }
   return result;
+}
+
+function isPublicHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 async function getOrCreateSheet(token: string, spreadsheetId: string, sheetName: string) {
@@ -651,7 +659,7 @@ async function replaceLeadSheet(
       warnings.push(formattingWarning(error));
     }
 
-    await resizeSheetColumns(token, spreadsheetId, sheetId, FINAL_SHEET_COLUMN_COUNT);
+    await resizeSheetColumns(token, spreadsheetId, sheetId, table.headers.length);
 
     const endColumn = columnName(table.headers.length);
     await updateValues(token, spreadsheetId, sheetName, `A1:${endColumn}1`, [table.headers]);
@@ -672,7 +680,7 @@ async function replaceLeadSheet(
     logWorkflowEvent("google-sheets", "replace complete", {
       rows: table.rows.length,
       columns: table.headers.length,
-      schema: "business_contacts_v1",
+      schema: table.headers.length === 18 ? "business_contacts_delivery_v1" : "business_contacts_v1",
       batches: Math.ceil(table.rows.length / WORKLOAD_LIMITS.exports.googleSheetsBatchRows),
     });
     return warnings;

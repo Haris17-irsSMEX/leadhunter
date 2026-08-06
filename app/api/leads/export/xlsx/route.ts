@@ -38,6 +38,12 @@ const excelColumnWidths: Record<string, number> = {
   "Public Profile / Evidence": 36,
   Location: 38,
   "Scraped At": 22,
+  "Delivery Platforms Found": 34,
+  "Uber Eats": 36,
+  DoorDash: 36,
+  Grubhub: 36,
+  Deliveroo: 36,
+  "Just Eat": 36,
 };
 
 export async function GET(request: NextRequest) {
@@ -55,7 +61,7 @@ export async function GET(request: NextRequest) {
     const leads = await attachDecisionMakers(filtered);
     const table = buildGoogleSheetsTable(leads);
     logWorkflowEvent("lead-export", "xlsx generated", {
-      schema: "business-contact-12-column",
+      schema: table.headers.length === 18 ? "business-contact-delivery-18-column" : "business-contact-12-column",
       scope: exportScope.scope,
       rows: table.rows.length,
       columns: table.headers.length,

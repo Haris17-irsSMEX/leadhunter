@@ -12,6 +12,11 @@ import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { getCategorySummary } from "@/lib/lead-category";
 import { hasMeaningfulRestaurantIntelligence, isRestaurantSearchText } from "@/lib/lead-kind";
 import { getLeadBadge } from "@/lib/leadScoring";
+import {
+  getRestaurantPlatformStatus as deliveryPlatformStatus,
+  getSafeRestaurantPlatformUrl as deliveryPlatformMenuUrl,
+  restaurantDeliveryStatusLabel,
+} from "@/lib/restaurant-delivery";
 import type { DeliveryPlatformId, Lead } from "@/lib/types";
 import type { UsageSummary } from "@/lib/usage";
 import { useToast } from "@/lib/useToast";
@@ -233,40 +238,6 @@ function deliveryPlatformLabel(platform: DeliveryPlatformId) {
   return deliveryPlatforms.find((item) => item.value === platform)?.label ?? platform;
 }
 
-function deliveryPlatformStatus(lead: Lead, platform: DeliveryPlatformId) {
-  if (platform === "ubereats") {
-    return lead.delivery_ubereats_status;
-  }
-  if (platform === "doordash") {
-    return lead.delivery_doordash_status;
-  }
-  if (platform === "grubhub") {
-    return lead.delivery_grubhub_status;
-  }
-  if (platform === "deliveroo") {
-    return lead.delivery_deliveroo_status;
-  }
-
-  return lead.delivery_justeat_status;
-}
-
-function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
-  if (platform === "ubereats") {
-    return lead.delivery_ubereats_menu_url;
-  }
-  if (platform === "doordash") {
-    return lead.delivery_doordash_menu_url;
-  }
-  if (platform === "grubhub") {
-    return lead.delivery_grubhub_menu_url;
-  }
-  if (platform === "deliveroo") {
-    return lead.delivery_deliveroo_menu_url;
-  }
-
-  return lead.delivery_justeat_menu_url;
-}
-
 function DeliveryPresenceSummary({
   lead,
   platforms,
@@ -299,20 +270,6 @@ function DeliveryPresenceSummary({
       })}
     </div>
   );
-}
-
-function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
-  if (status === "completed") {
-    return "Completed";
-  }
-  if (status === "partial") {
-    return "Partial";
-  }
-  if (status === "error") {
-    return "Error";
-  }
-
-  return "Not checked";
 }
 
 function sourceLabel(source: Lead["source"]) {
@@ -1785,7 +1742,7 @@ export default function FinderPage() {
                             <td className="px-4 py-4">
                               <div className="space-y-2">
                                 {showRestaurantPreview
-                                  ? statusBadge(enrichmentStatusLabel(lead.restaurant_enrichment_status), lead.restaurant_enrichment_status)
+                                  ? statusBadge(restaurantDeliveryStatusLabel(lead), lead.restaurant_enrichment_status)
                                   : scrapeStatusBadge(lead.scrape_status) ?? statusBadge("Saved", "found")}
                                 {lead.id ? (
                                   <button

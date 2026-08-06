@@ -16,8 +16,15 @@ import { deliveryStatusLabelForLead } from "@/lib/delivery-status-label";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import type { LeadExportFilter } from "@/lib/lead-export-filters";
 import { getCleanCategoryLabels } from "@/lib/lead-category";
-import { hasMeaningfulRestaurantIntelligence } from "@/lib/lead-kind";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
+import {
+  getFoundRestaurantDeliveryPlatforms,
+  getRestaurantDeliverySummary,
+  getRestaurantPlatformStatus as deliveryPlatformStatus,
+  getSafeRestaurantPlatformUrl as deliveryPlatformMenuUrl,
+  isRestaurantDeliveryContext,
+  restaurantDeliveryStatusLabel,
+} from "@/lib/restaurant-delivery";
 import type { DecisionMaker, DeliveryPlatformId, Lead } from "@/lib/types";
 import { useToast } from "@/lib/useToast";
 
@@ -465,7 +472,7 @@ function SmartLink({ href, label, className = "" }: { href?: string; label: stri
 }
 
 function hasDeliverySignal(lead: Lead) {
-  return hasMeaningfulRestaurantIntelligence(lead);
+  return isRestaurantDeliveryContext(lead);
 }
 
 function DeliveryPresenceCard({ lead, platform }: { lead: Lead; platform: DeliveryPlatformId }) {
@@ -509,52 +516,14 @@ function deliveryPlatformLabel(platform: DeliveryPlatformId) {
   return deliveryPlatforms.find((item) => item.value === platform)?.label ?? platform;
 }
 
-function deliveryPlatformStatus(lead: Lead, platform: DeliveryPlatformId) {
-  if (platform === "ubereats") {
-    return lead.delivery_ubereats_status;
-  }
-  if (platform === "doordash") {
-    return lead.delivery_doordash_status;
-  }
-  if (platform === "grubhub") {
-    return lead.delivery_grubhub_status;
-  }
-  if (platform === "deliveroo") {
-    return lead.delivery_deliveroo_status;
-  }
-
-  return lead.delivery_justeat_status;
-}
-
-function deliveryPlatformMenuUrl(lead: Lead, platform: DeliveryPlatformId) {
-  if (platform === "ubereats") {
-    return lead.delivery_ubereats_menu_url;
-  }
-  if (platform === "doordash") {
-    return lead.delivery_doordash_menu_url;
-  }
-  if (platform === "grubhub") {
-    return lead.delivery_grubhub_menu_url;
-  }
-  if (platform === "deliveroo") {
-    return lead.delivery_deliveroo_menu_url;
-  }
-
-  return lead.delivery_justeat_menu_url;
-}
-
-function enrichmentStatusLabel(status?: Lead["restaurant_enrichment_status"]) {
-  if (status === "completed") {
-    return "Completed";
-  }
-  if (status === "partial") {
-    return "Partial";
-  }
-  if (status === "error") {
-    return "Error";
-  }
-
-  return "Not checked";
+function collapsedDeliverySummary(lead: Lead) {
+  const found = getFoundRestaurantDeliveryPlatforms(lead);
+  if (found.length) return `Delivery: ${found.map(({ label }) => label).join(" · ")}`;
+  const summary = getRestaurantDeliverySummary(lead);
+  if (summary === "None found") return "No delivery platforms found";
+  if (summary === "Partial check") return "Delivery check partial";
+  if (summary === "Check failed") return "Delivery check failed";
+  return "Delivery not checked";
 }
 
 function needsEmailEnrichment(lead: Lead) {
@@ -804,6 +773,11 @@ function ProfessionalLeadRow({
                   {industry.more ? <span className="ml-1">+{industry.more} more</span> : null}
                 </span>
               ) : null}
+              {showDeliveryIntelligence ? (
+                <span className="mt-2 block max-w-[360px] truncate text-xs font-medium text-[var(--text-secondary)]">
+                  {collapsedDeliverySummary(lead)}
+                </span>
+              ) : null}
             </span>
           </div>
         </td>
@@ -919,7 +893,7 @@ function ProfessionalLeadRow({
                       {sourceLabel(lead.source)}
                     </span>
                     {showDeliveryIntelligence
-                      ? statusBadge(`Enrichment: ${enrichmentStatusLabel(lead.restaurant_enrichment_status)}`, lead.restaurant_enrichment_status)
+                      ? statusBadge(restaurantDeliveryStatusLabel(lead), lead.restaurant_enrichment_status)
                       : null}
                   </div>
                   <p className="mt-2 text-sm text-[var(--text-secondary)]">

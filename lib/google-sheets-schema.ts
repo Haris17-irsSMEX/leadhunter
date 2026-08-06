@@ -2,6 +2,11 @@ import { getContactPageUrl } from "@/lib/contactability";
 import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { LeadExportValidationError, cleanExportText } from "@/lib/lead-export";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
+import {
+  getRestaurantDeliverySummary,
+  getRestaurantPlatformExportValue,
+  shouldIncludeRestaurantDeliveryColumns,
+} from "@/lib/restaurant-delivery";
 import { safeSpreadsheetCell } from "@/lib/spreadsheet-safety";
 import type { Lead } from "@/lib/types";
 import { normalizePublicHttpUrl } from "@/lib/urls";
@@ -22,7 +27,13 @@ export type GoogleSheetsColumn = {
     | "contact_person_role"
     | "public_profile_evidence"
     | "location"
-    | "scraped_at";
+    | "scraped_at"
+    | "delivery_platforms_found"
+    | "delivery_ubereats"
+    | "delivery_doordash"
+    | "delivery_grubhub"
+    | "delivery_deliveroo"
+    | "delivery_justeat";
   header: string;
   width: number;
   wrapStrategy: GoogleSheetsWrapStrategy;
@@ -176,6 +187,56 @@ export const GOOGLE_SHEETS_COLUMNS: readonly GoogleSheetsColumn[] = [
   },
 ];
 
+export const RESTAURANT_DELIVERY_COLUMNS: readonly GoogleSheetsColumn[] = [
+  {
+    key: "delivery_platforms_found",
+    header: "Delivery Platforms Found",
+    width: 270,
+    wrapStrategy: "WRAP",
+    value: getRestaurantDeliverySummary,
+  },
+  {
+    key: "delivery_ubereats",
+    header: "Uber Eats",
+    width: 280,
+    wrapStrategy: "CLIP",
+    hyperlink: true,
+    value: (lead) => getRestaurantPlatformExportValue(lead, "ubereats"),
+  },
+  {
+    key: "delivery_doordash",
+    header: "DoorDash",
+    width: 280,
+    wrapStrategy: "CLIP",
+    hyperlink: true,
+    value: (lead) => getRestaurantPlatformExportValue(lead, "doordash"),
+  },
+  {
+    key: "delivery_grubhub",
+    header: "Grubhub",
+    width: 280,
+    wrapStrategy: "CLIP",
+    hyperlink: true,
+    value: (lead) => getRestaurantPlatformExportValue(lead, "grubhub"),
+  },
+  {
+    key: "delivery_deliveroo",
+    header: "Deliveroo",
+    width: 280,
+    wrapStrategy: "CLIP",
+    hyperlink: true,
+    value: (lead) => getRestaurantPlatformExportValue(lead, "deliveroo"),
+  },
+  {
+    key: "delivery_justeat",
+    header: "Just Eat",
+    width: 280,
+    wrapStrategy: "CLIP",
+    hyperlink: true,
+    value: (lead) => getRestaurantPlatformExportValue(lead, "justeat"),
+  },
+];
+
 export function buildGoogleSheetsTable(leads: Lead[]) {
   if (leads.length > WORKLOAD_LIMITS.exports.maxRows) {
     throw new LeadExportValidationError(
@@ -183,13 +244,21 @@ export function buildGoogleSheetsTable(leads: Lead[]) {
     );
   }
 
-  const headers = GOOGLE_SHEETS_COLUMNS.map((column) => column.header);
-  if (GOOGLE_SHEETS_COLUMNS.length !== 12 || new Set(headers).size !== headers.length) {
+  const columns = shouldIncludeRestaurantDeliveryColumns(leads)
+    ? [...GOOGLE_SHEETS_COLUMNS, ...RESTAURANT_DELIVERY_COLUMNS]
+    : [...GOOGLE_SHEETS_COLUMNS];
+  const headers = columns.map((column) => column.header);
+  if (
+    GOOGLE_SHEETS_COLUMNS.length !== 12 ||
+    RESTAURANT_DELIVERY_COLUMNS.length !== 6 ||
+    ![12, 18].includes(columns.length) ||
+    new Set(headers).size !== headers.length
+  ) {
     throw new LeadExportValidationError("The Google Sheets schema could not be generated safely.");
   }
 
   const rows = leads.map((lead) =>
-    GOOGLE_SHEETS_COLUMNS.map((column) =>
+    columns.map((column) =>
       safeSpreadsheetCell(column.value(lead), WORKLOAD_LIMITS.exports.maxCellLength),
     ),
   );
@@ -199,7 +268,7 @@ export function buildGoogleSheetsTable(leads: Lead[]) {
   }
 
   return {
-    columns: GOOGLE_SHEETS_COLUMNS,
+    columns,
     headers,
     rows,
   };

@@ -1,4 +1,5 @@
 import type { Lead } from "@/lib/types";
+import { normalizePublicHttpUrl } from "@/lib/urls";
 
 const restaurantSignals = [
   "restaurant",
@@ -134,6 +135,14 @@ const deliveryStatusKeys = [
   "delivery_justeat_status",
 ] as const;
 
+const deliveryUrlKeys = [
+  "delivery_ubereats_menu_url",
+  "delivery_doordash_menu_url",
+  "delivery_grubhub_menu_url",
+  "delivery_deliveroo_menu_url",
+  "delivery_justeat_menu_url",
+] as const;
+
 export function hasMeaningfulRestaurantIntelligence(lead: Lead) {
   const checkedPlatform = deliveryStatusKeys.some((key) => {
     const status = lead[key];
@@ -141,6 +150,21 @@ export function hasMeaningfulRestaurantIntelligence(lead: Lead) {
   });
 
   if (checkedPlatform) {
+    return true;
+  }
+
+  const storedListingUrl = deliveryUrlKeys.some((key) => {
+    const value = lead[key]?.trim();
+    if (!value || !/^https?:\/\//i.test(value)) return false;
+    try {
+      normalizePublicHttpUrl(value);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  if (storedListingUrl) {
     return true;
   }
 
