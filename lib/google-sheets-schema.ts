@@ -3,9 +3,9 @@ import { cleanSafePublicEmail } from "@/lib/email-safety";
 import { LeadExportValidationError, cleanExportText } from "@/lib/lead-export";
 import { getOutreachIntelligence, getPrimaryDecisionMaker } from "@/lib/outreach-intelligence";
 import {
+  getRestaurantExportPlatforms,
   getRestaurantDeliverySummary,
   getRestaurantPlatformExportValue,
-  shouldIncludeRestaurantDeliveryColumns,
 } from "@/lib/restaurant-delivery";
 import { safeSpreadsheetCell } from "@/lib/spreadsheet-safety";
 import type { Lead } from "@/lib/types";
@@ -244,14 +244,20 @@ export function buildGoogleSheetsTable(leads: Lead[]) {
     );
   }
 
-  const columns = shouldIncludeRestaurantDeliveryColumns(leads)
-    ? [...GOOGLE_SHEETS_COLUMNS.slice(0, 10), ...RESTAURANT_DELIVERY_COLUMNS, ...GOOGLE_SHEETS_COLUMNS.slice(10)]
+  const restaurantPlatforms = getRestaurantExportPlatforms(leads);
+  const deliveryColumns = RESTAURANT_DELIVERY_COLUMNS.filter(
+    (column) =>
+      column.key === "delivery_platforms_found" ||
+      restaurantPlatforms.some((platform) => column.key === `delivery_${platform}`),
+  );
+  const columns = restaurantPlatforms.length
+    ? [...GOOGLE_SHEETS_COLUMNS.slice(0, 10), ...deliveryColumns, ...GOOGLE_SHEETS_COLUMNS.slice(10)]
     : [...GOOGLE_SHEETS_COLUMNS];
   const headers = columns.map((column) => column.header);
   if (
     GOOGLE_SHEETS_COLUMNS.length !== 12 ||
     RESTAURANT_DELIVERY_COLUMNS.length !== 6 ||
-    ![12, 18].includes(columns.length) ||
+    !(columns.length === 12 || (columns.length >= 14 && columns.length <= 18)) ||
     new Set(headers).size !== headers.length
   ) {
     throw new LeadExportValidationError("The Google Sheets schema could not be generated safely.");

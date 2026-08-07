@@ -680,7 +680,7 @@ async function replaceLeadSheet(
     logWorkflowEvent("google-sheets", "replace complete", {
       rows: table.rows.length,
       columns: table.headers.length,
-      schema: table.headers.length === 18 ? "business_contacts_delivery_v1" : "business_contacts_v1",
+      schema: table.headers.length > 12 ? "business_contacts_delivery_dynamic_v1" : "business_contacts_v1",
       batches: Math.ceil(table.rows.length / WORKLOAD_LIMITS.exports.googleSheetsBatchRows),
     });
     return warnings;

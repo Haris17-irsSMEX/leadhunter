@@ -52,10 +52,7 @@ export function isRestaurantDeliveryContext(lead: Lead) {
 }
 
 export function shouldIncludeRestaurantDeliveryColumns(leads: Lead[]) {
-  return leads.some((lead) => {
-    if (hasMeaningfulRestaurantIntelligence(lead)) return true;
-    return RESTAURANT_DELIVERY_PLATFORMS.some(({ id }) => Boolean(getSafeRestaurantPlatformUrl(lead, id)));
-  });
+  return getRestaurantExportPlatforms(leads).length > 0;
 }
 
 function selectedPlatforms(lead: Lead) {
@@ -65,6 +62,33 @@ function selectedPlatforms(lead: Lead) {
   if (!Array.isArray(selected)) return [];
   const validIds = new Set(RESTAURANT_DELIVERY_PLATFORMS.map(({ id }) => id));
   return selected.filter((value): value is DeliveryPlatformId => typeof value === "string" && validIds.has(value as DeliveryPlatformId));
+}
+
+function hasCheckedRestaurantPlatform(lead: Lead, platform: DeliveryPlatformId) {
+  const status = getRestaurantPlatformStatus(lead, platform);
+  return Boolean(status && status !== "not_checked") || Boolean(getSafeRestaurantPlatformUrl(lead, platform));
+}
+
+export function getRestaurantExportPlatforms(leads: Lead[]) {
+  const platformIds = new Set<DeliveryPlatformId>();
+
+  for (const lead of leads) {
+    if (!isRestaurantLead(lead)) continue;
+
+    const selected = selectedPlatforms(lead);
+    if (selected.length) {
+      selected.forEach((platform) => platformIds.add(platform));
+      continue;
+    }
+
+    RESTAURANT_DELIVERY_PLATFORMS.forEach(({ id }) => {
+      if (hasCheckedRestaurantPlatform(lead, id)) {
+        platformIds.add(id);
+      }
+    });
+  }
+
+  return RESTAURANT_DELIVERY_PLATFORMS.map(({ id }) => id).filter((id) => platformIds.has(id));
 }
 
 export function getRestaurantDeliveryCheckState(lead: Lead): RestaurantDeliveryCheckState {
@@ -93,14 +117,14 @@ export function getRestaurantDeliveryCheckState(lead: Lead): RestaurantDeliveryC
 }
 
 export function getFoundRestaurantDeliveryPlatforms(lead: Lead) {
-  if (!isRestaurantDeliveryContext(lead)) return [];
+  if (!isRestaurantLead(lead)) return [];
   return RESTAURANT_DELIVERY_PLATFORMS.filter(
     ({ id }) => getRestaurantPlatformStatus(lead, id) === "found" || Boolean(getSafeRestaurantPlatformUrl(lead, id)),
   );
 }
 
 export function getRestaurantDeliverySummary(lead: Lead) {
-  if (!isRestaurantDeliveryContext(lead)) return "";
+  if (!isRestaurantLead(lead)) return "";
   const found = getFoundRestaurantDeliveryPlatforms(lead);
   if (found.length) return found.map(({ label }) => label).join(", ");
 
@@ -112,7 +136,7 @@ export function getRestaurantDeliverySummary(lead: Lead) {
 }
 
 export function getRestaurantPlatformExportValue(lead: Lead, platform: DeliveryPlatformId) {
-  if (!isRestaurantDeliveryContext(lead)) return "";
+  if (!isRestaurantLead(lead)) return "";
   const url = getSafeRestaurantPlatformUrl(lead, platform);
   const status = getRestaurantPlatformStatus(lead, platform);
 

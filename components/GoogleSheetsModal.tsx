@@ -303,7 +303,7 @@ export default function GoogleSheetsModal({
           </label>
 
           <div className="rounded-xl border border-blue-200 bg-[var(--primary-soft)] p-4 text-sm leading-6 text-[var(--text-secondary)]">
-            LeadHunter will replace the selected tab with a clean 12-column business contact sheet.
+            LeadHunter will replace the selected tab with a clean business contact sheet.
           </div>
 
           <label className="block">
@@ -373,7 +373,7 @@ export default function GoogleSheetsModal({
             <div className="app-alert app-alert-success">
               <div>
                 <p className="font-semibold">Selected leads synced to Google Sheets.</p>
-                <p className="mt-1 text-xs text-green-800">{success.rowsWritten} rows written. 12-column business contact format applied.</p>
+                <p className="mt-1 text-xs text-green-800">{success.rowsWritten} rows written. Business contact format applied.</p>
                 {success.warnings.length ? <p className="mt-1 text-xs text-amber-800">{success.warnings.join(" ")}</p> : null}
                 {success.url ? (
                   <a href={success.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex items-center gap-1.5 font-semibold text-green-800 underline underline-offset-4">

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
     const leads = await attachDecisionMakers(filtered);
     const table = buildGoogleSheetsTable(leads);
     logWorkflowEvent("lead-export", "csv generated", {
-      schema: table.headers.length === 18 ? "business-contact-delivery-18-column" : "business-contact-12-column",
+      schema: table.headers.length > 12 ? "business-contact-delivery-dynamic" : "business-contact-12-column",
       scope: exportScope.scope,
       rows: table.rows.length,
       columns: table.headers.length,

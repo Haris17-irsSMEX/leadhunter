@@ -35,7 +35,7 @@ export default function IntegrationsPage() {
                   </span>
                 </div>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--text-secondary)]">
-                  Sync filtered LeadHunter records into one clean 12-column business contact sheet.
+                  Sync filtered LeadHunter records into one clean business contact sheet.
                 </p>
               </div>
             </div>
